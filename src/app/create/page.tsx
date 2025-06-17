@@ -149,7 +149,7 @@ export default function CreateSchedule() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-4">
+    <div className="max-w-5xl mx-auto py-8 px-4">
       <div className="bg-white rounded shadow p-8">
         <h2 className="text-2xl font-bold text-blue-700 mb-6 border-b pb-2">日程を作成</h2>
         <div className="flex content-end space-x-4 mb-6">          
@@ -207,11 +207,6 @@ export default function CreateSchedule() {
                         onChange={(e) => handleRowChange(i, e.target.value)}
                         placeholder={i === rows.length -1 ? "追加..." : ""}
                       />
-                      {rows.length > 1 && i < rows.length - 1 && (
-                        <button onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-500">
-                          <TrashIcon />
-                        </button>
-                      )}
                     </td>
                   </tr>
                 ))}
@@ -236,16 +231,38 @@ export default function CreateSchedule() {
                         onChange={(e) => handleColChange(i, e.target.value)}
                          placeholder={i === cols.length -1 ? "追加..." : ""}
                       />
-                       {cols.length > 1 && i < cols.length - 1 && (
-                        <button onClick={() => removeCol(i)} className="text-gray-400 hover:text-red-500">
-                           <TrashIcon />
-                        </button>
-                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+          <div>
+            <p>プレビュー</p>
+            {rows.length > 1 && cols.length > 1 ? (
+              <table className="border-collapse border w-full"> 
+                <thead>
+                  <tr>
+                    <th className="border px-2 py-1"></th>
+                    {rows.slice(0, -1).map((row, i) => (
+                      <th key={i} className="border px-2 py-1">{row}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cols.slice(0, -1).map((col, i) => (
+                    <tr key={i}>
+                      <th className="border px-2 py-1">{col}</th>
+                      {rows.slice(0, -1).map((row, j) => (
+                        <td key={`${i}-${j}`} className="border px-2 py-1"></td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-gray-500">行と列を追加してください。</p>
+            )}
           </div>
         </div>
         <button
