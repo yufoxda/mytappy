@@ -73,7 +73,6 @@ export default function ConfirmPage() {
           </table>
         </div>
       </div>
-      <button onClick={() => router.push('/')} style={{ marginTop: "2em" }}>ホームに戻る</button>
     </div>
   );
 }
