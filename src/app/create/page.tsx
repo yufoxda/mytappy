@@ -136,7 +136,7 @@ export default function CreateSchedule() {
       });
 
       if (res.ok) {
-        router.push(`/schedule/${id}`);
+        router.push(`/${id}`);
       } else {
         alert('保存に失敗しました');
       }
