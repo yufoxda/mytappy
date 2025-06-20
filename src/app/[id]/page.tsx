@@ -8,11 +8,20 @@ export default function ConfirmPage() {
   const [schedule, setSchedule] = useState<any>(null);
 
   useEffect(() => {
-    fetch('/api/schedules')
-      .then(res => res.json())
+    if (!id) return;
+    fetch(`/api/schedules/${id}`)
+      .then(res => {
+        if (!res.ok) {
+          throw new Error('Schedule not found');
+        }
+        return res.json();
+      })
       .then((data) => {
-        const found = data.find((s: any) => s.id === id);
-        if (found) setSchedule(found);
+        setSchedule(data);
+      })
+      .catch(err => {
+        console.error(err);
+        // ここで404ページなどにリダイレクトすることもできます
       });
   }, [id]);
 
@@ -30,7 +39,15 @@ export default function ConfirmPage() {
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4">
-      <h2 className="text-2xl font-bold mb-4">{schedule.title} の日程確認</h2>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-2xl font-bold">{schedule.title} の日程確認</h2>
+        <button
+          onClick={() => router.push(`/${id}/register`)}
+          className="bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 shrink-0"
+        >
+          予定を登録する
+        </button>
+      </div>
       <div className="mb-6">
         <strong>期間：</strong>{schedule.start} 〜 {schedule.end}
       </div>
