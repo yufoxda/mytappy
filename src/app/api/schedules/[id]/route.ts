@@ -4,8 +4,8 @@ import path from 'path';
 
 const filePath = path.join(process.cwd(), 'public', 'data.json');
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  const { id } = params;
+export async function PUT(req: NextRequest, params : { params: { id: string } }) {
+  const { id } = await params.params;
   const updatedSchedule = await req.json();
   let schedules = [];
   try {
@@ -26,8 +26,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 // 特定のIDのスケジュールを取得
-export async function GET(request: Request, { params }: { params: { id: string } }) {
-  const { id } = params;
+export async function GET(request: Request, params : { params: { id: string } }) {
+  const { id } = await params.params;
   let schedules = [];
   try {
     const data = await readFile(filePath, 'utf8');
@@ -45,8 +45,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
 }
 
 // 特定のIDのスケジュールにエントリを追加 (PATCH)
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
-  const { id } = params;
+export async function PATCH(request: Request, params : { params: { id: string } }) {
+  const { id } = await params.params;
   const newEntry = await request.json();
   let schedules = [];
   try {
