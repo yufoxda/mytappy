@@ -27,9 +27,9 @@ export default function ConfirmPage() {
 
   if (!schedule) return <div>読み込み中...</div>;
 
-  // 参加人数集計
-  const counts = schedule.rows.map((_: any, i: number) =>
-    schedule.cols.map((_: any, j: number) =>
+  // 参加人数集計（行:時刻, 列:日付）
+  const counts = schedule.cols.map((_: any, i: number) =>
+    schedule.rows.map((_: any, j: number) =>
       schedule.entries.reduce(
         (acc: number, entry: any) => acc + (entry.selected?.[i]?.[j] ? 1 : 0),
         0
@@ -67,16 +67,16 @@ export default function ConfirmPage() {
             <thead>
               <tr>
                 <th></th>
-                {schedule.cols.map((col: string, j: number) => (
-                  <th key={j}>{col}</th>
+                {schedule.rows.map((row: string, j: number) => (
+                  <th key={j}>{row}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {schedule.rows.map((row: string, i: number) => (
+              {schedule.cols.map((col: string, i: number) => (
                 <tr key={i}>
-                  <td>{row}</td>
-                  {schedule.cols.map((_: string, j: number) => (
+                  <td>{col}</td>
+                  {schedule.rows.map((_: string, j: number) => (
                     <td key={j} style={{
                       background: counts[i][j] > 0 ? "#90caf9" : "#f5f5f5",
                       fontWeight: counts[i][j] > 0 ? "bold" : "normal"
