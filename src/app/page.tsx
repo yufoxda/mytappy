@@ -6,7 +6,8 @@ export default function Home() {
 
   return (
     <div className="max-w-3xl mx-auto py-8 px-4">
-      <h1 className="text-2xl font-bold text-blue-700 mb-6 border-b pb-2">mytappy（仮）</h1>
+      <h1 className="text-2xl font-bold text-blue-700 mb-6 border-b pb-2">たぴぷら</h1>
+      <h2 className="text-xl font-semibold mb-4">tappy++</h2>
       <p className="mb-4">このアプリは、日程調整を簡単に行うためのツールです。</p>
         <button
           className="mx-auto bg-blue-600 text-white px-4 py-2 my-80 rounded hover:bg-blue-700"
