@@ -10,26 +10,34 @@ export default function RegisterPage() {
   const [selected, setSelected] = useState<boolean[][]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (!id) return;
-    fetch(`/api/schedules/${id}`)
-      .then(res => res.json())
-      .then((data) => {
-        if (data) {
-            setSchedule(data);
-            // 行:時刻, 列:日付
-            const initialSelected = Array(data.cols.length).fill(false).map(() => Array(data.rows.length).fill(false));
-            setSelected(initialSelected);
+useEffect(() => {
+  if (!id) return;
+  fetch(`/api/schedules/${id}`)
+    .then(res => res.json())
+    .then((data) => {
+      if (data) {
+        setSchedule(data);
+        // 行と列の初期化を明示的に行う
+        const initialSelected = [];
+        for (let i = 0; i < data.cols.length; i++) {
+          initialSelected[i] = Array(data.rows.length).fill(false);
         }
-      });
-  }, [id]);
+        console.log('初期化された選択状態:', initialSelected);
+        setSelected(initialSelected);
+      }
+    });
+}, [id]);
 
   // 行:時刻, 列:日付
-  const handleSelect = (rowIndex: number, colIndex: number) => {
-    const newSelected = selected.map(row => [...row]);
+const handleSelect = (rowIndex: number, colIndex: number) => {
+  console.log(`選択: 行=${rowIndex}, 列=${colIndex}`);
+  setSelected(prev => {
+    const newSelected = prev.map(row => [...row]);
     newSelected[rowIndex][colIndex] = !newSelected[rowIndex][colIndex];
-    setSelected(newSelected);
-  };
+    console.log('更新後の状態:', newSelected);
+    return newSelected;
+  });
+};
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -78,24 +86,29 @@ export default function RegisterPage() {
             <table className="border-collapse border w-full">
                 <thead>
                     <tr>
-                        <th className="border px-2 py-1"></th>
+                        <th className="border"></th>
                         {schedule.rows.map((row: string, i: number) => (
-                            <th key={i} className="border px-2 py-1">{row}</th>
+                            <th key={i} className="border">{row}</th>
                         ))}
                     </tr>
                 </thead>
                 <tbody>
                     {schedule.cols.map((col: string, i: number) => (
                         <tr key={i}>
-                            <th className="border px-2 py-1">{col}</th>
+                            <th className="">{col}</th>
                             {schedule.rows.map((_: string, j: number) => (
-                                <td key={`${i}-${j}`} className="border px-2 py-1 text-center">
-                                    <input 
-                                        type="checkbox"
-                                        checked={selected[i]?.[j] || false}
-                                        onChange={() => handleSelect(i, j)}
-                                        className="w-5 h-5 cursor-pointer"
-                                    />
+                                <td key={`${i}-${j}`} className="text-center">
+                                   <button
+  type="button"
+  onClick={() => handleSelect(i, j)}
+  className={`w-full h-10 rounded p-2 ${
+    selected && selected[i] && selected[i][j] === true
+      ? "bg-blue-500 text-white" 
+      : "bg-white hover:bg-gray-100 border border-gray-300"
+  }`}
+>
+  {selected && selected[i] && selected[i][j] === true ? '◯' : '×'}
+</button>
                                 </td>
                             ))}
                         </tr>
