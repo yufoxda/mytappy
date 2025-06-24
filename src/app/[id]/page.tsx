@@ -1,28 +1,31 @@
 'use client';
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { getScheduleById } from '@/lib/actions';
 
 export default function ConfirmPage() {
   const { id } = useParams();
   const router = useRouter();
   const [schedule, setSchedule] = useState<any>(null);
-
   useEffect(() => {
     if (!id) return;
-    fetch(`/api/schedules/${id}`)
-      .then(res => {
-        if (!res.ok) {
-          throw new Error('Schedule not found');
+    
+    const fetchSchedule = async () => {
+      try {
+        const result = await getScheduleById(id as string);
+        
+        if (result.success) {
+          setSchedule(result.data);
+        } else {
+          console.error(result.error);
+          // ここで404ページなどにリダイレクトすることもできます
         }
-        return res.json();
-      })
-      .then((data) => {
-        setSchedule(data);
-      })
-      .catch(err => {
+      } catch (err) {
         console.error(err);
-        // ここで404ページなどにリダイレクトすることもできます
-      });
+      }
+    };
+
+    fetchSchedule();
   }, [id]);
 
   if (!schedule) return <div>読み込み中...</div>;

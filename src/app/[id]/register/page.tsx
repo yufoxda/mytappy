@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { getScheduleById, addEntryToSchedule } from '@/lib/actions';
 
 export default function RegisterPage() {
   const { id } = useParams();
@@ -12,20 +13,29 @@ export default function RegisterPage() {
 
 useEffect(() => {
   if (!id) return;
-  fetch(`/api/schedules/${id}`)
-    .then(res => res.json())
-    .then((data) => {
-      if (data) {
-        setSchedule(data);
+  
+  const fetchSchedule = async () => {
+    try {
+      const result = await getScheduleById(id as string);
+      
+      if (result.success && result.data) {
+        setSchedule(result.data);
         // 行と列の初期化を明示的に行う
         const initialSelected = [];
-        for (let i = 0; i < data.cols.length; i++) {
-          initialSelected[i] = Array(data.rows.length).fill(false);
+        for (let i = 0; i < result.data.cols.length; i++) {
+          initialSelected[i] = Array(result.data.rows.length).fill(false);
         }
         console.log('初期化された選択状態:', initialSelected);
         setSelected(initialSelected);
+      } else {
+        console.error(result.error);
       }
-    });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  fetchSchedule();
 }, [id]);
 
   // 行:時刻, 列:日付
@@ -38,7 +48,6 @@ const handleSelect = (rowIndex: number, colIndex: number) => {
     return newSelected;
   });
 };
-
   const handleSubmit = async () => {
     setLoading(true);
     const newEntry = {
@@ -47,16 +56,12 @@ const handleSelect = (rowIndex: number, colIndex: number) => {
     };
 
     try {
-        const res = await fetch(`/api/schedules/${id}`, {
-            method: 'PATCH',
-            body: JSON.stringify(newEntry),
-            headers: { 'Content-Type': 'application/json' }
-        });
+        const result = await addEntryToSchedule(id as string, newEntry);
 
-        if (res.ok) {
+        if (result.success) {
             router.push(`/${id}`);
         } else {
-            alert('登録に失敗しました');
+            alert(`登録に失敗しました: ${result.error}`);
         }
     } catch (error) {
         console.error('An error occurred:', error);

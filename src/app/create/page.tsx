@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from 'uuid';
+import { createSchedule } from '@/lib/actions';
 
 // ゴミ箱アイコンのSVGコンポーネント
 const TrashIcon = () => (
@@ -114,8 +115,7 @@ export default function CreateSchedule() {
       setCols(cols.filter((_, i) => i !== index));
     }
   };
-  
-  const handleCreate = async () => {
+    const handleCreate = async () => {
     setLoading(true);
     const id = uuidv4();
     const newSchedule = {
@@ -129,16 +129,12 @@ export default function CreateSchedule() {
     };
 
     try {
-      const res = await fetch('/api/schedules', {
-        method: 'POST',
-        body: JSON.stringify(newSchedule),
-        headers: { 'Content-Type': 'application/json' }
-      });
+      const result = await createSchedule(newSchedule);
 
-      if (res.ok) {
+      if (result.success) {
         router.push(`/${id}`);
       } else {
-        alert('保存に失敗しました');
+        alert(`保存に失敗しました: ${result.error}`);
       }
     } catch (error) {
       console.error('An error occurred:', error);
