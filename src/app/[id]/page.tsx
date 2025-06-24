@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getScheduleById } from '@/lib/actions';
+import { getEventById } from '@/lib/actions';
 
 export default function ConfirmPage() {
   const { id } = useParams();
@@ -12,7 +12,7 @@ export default function ConfirmPage() {
     
     const fetchSchedule = async () => {
       try {
-        const result = await getScheduleById(id as string);
+        const result = await getEventById(id as string);
         
         if (result.success) {
           setSchedule(result.data);
@@ -31,14 +31,14 @@ export default function ConfirmPage() {
   if (!schedule) return <div>読み込み中...</div>;
 
   // 参加人数集計（行:時刻, 列:日付）
-  const counts = schedule.cols.map((_: any, i: number) =>
-    schedule.rows.map((_: any, j: number) =>
-      schedule.entries.reduce(
-        (acc: number, entry: any) => acc + (entry.selected?.[i]?.[j] ? 1 : 0),
-        0
-      )
-    )
-  );
+  // const counts = schedule.cols.map((_: any, i: number) =>
+    // schedule.rows.map((_: any, j: number) =>
+    //   schedule.entries.reduce(
+    //     (acc: number, entry: any) => acc + (entry.selected?.[i]?.[j] ? 1 : 0),
+    //     0
+    //   )
+    // )
+  // );
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4">
@@ -56,26 +56,26 @@ export default function ConfirmPage() {
       </div>
       <div className="mb-6">
         <h3 className="text-lg font-semibold mb-2">参加者一覧</h3>
-        <ul>
+        {/* <ul>
           {schedule.entries.length === 0 && <li>まだ参加者がいません</li>}
           {schedule.entries.map((entry: any, idx: number) => (
             <li key={idx}>{entry.user}</li>
           ))}
-        </ul>
+        </ul> */}
       </div>
       <div>
         <h3 className="text-lg font-semibold mb-2">時間帯ごとの参加人数</h3>
         <div className="overflow-x-auto">
           <table>
-            <thead>
+            {/* <thead>
               <tr>
                 <th></th>
                 {schedule.rows.map((row: string, j: number) => (
                   <th key={j}>{row}</th>
                 ))}
               </tr>
-            </thead>
-            <tbody>
+            </thead> */}
+            {/* <tbody>
               {schedule.cols.map((col: string, i: number) => (
                 <tr key={i}>
                   <td>{col}</td>
@@ -89,7 +89,7 @@ export default function ConfirmPage() {
                   ))}
                 </tr>
               ))}
-            </tbody>
+            </tbody> */}
           </table>
         </div>
       </div>

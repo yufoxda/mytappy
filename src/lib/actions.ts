@@ -1,19 +1,20 @@
 'use server';
 
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
+import { supabase } from './supabase';
 
-// スケジュール作成のServer Action
-export async function createSchedule(scheduleData: any) {
+// イベント作成のServer Action
+export async function createEvent(eventData: { title: string; description?: string }) {
   try {
     const { data, error } = await supabase
-      .from('schedules')
-      .insert([scheduleData])
+      .from('event')
+      .insert([eventData])
       .select();
     
     if (error) {
-      console.error('Error creating schedule:', error);
-      return { success: false, error: 'Failed to create schedule' };
+      console.error('Error creating event:', error);
+      return { success: false, error: 'Failed to create event' };
     }
     
     // キャッシュを無効化してデータを再取得
@@ -26,115 +27,93 @@ export async function createSchedule(scheduleData: any) {
   }
 }
 
-// 全スケジュール取得のServer Action
-export async function getSchedules() {
+// 全イベント取得のServer Action
+export async function getEvents() {
   try {
-    const { data: schedules, error } = await supabase
-      .from('schedules')
+    const { data: events, error } = await supabase
+      .from('event')
       .select('*')
       .order('created_at', { ascending: false });
     
     if (error) {
-      console.error('Error fetching schedules:', error);
-      return { success: false, error: 'Failed to fetch schedules' };
+      console.error('Error fetching events:', error);
+      return { success: false, error: 'Failed to fetch events' };
     }
     
-    return { success: true, data: schedules || [] };
+    return { success: true, data: events || [] };
   } catch (error) {
     console.error('Error:', error);
     return { success: false, error: 'Internal server error' };
   }
 }
 
-// 特定のスケジュール取得のServer Action
-export async function getScheduleById(id: string) {
+// 特定のイベント取得のServer Action
+export async function getEventById(id: string) {
   try {
-    const { data: schedule, error } = await supabase
-      .from('schedules')
+    const { data: event, error } = await supabase
+      .from('event')
       .select('*')
       .eq('id', id)
       .single();
     
     if (error) {
       if (error.code === 'PGRST116') { // No rows found
-        return { success: false, error: 'Schedule not found' };
+        return { success: false, error: 'Event not found' };
       }
-      console.error('Error fetching schedule:', error);
-      return { success: false, error: 'Failed to fetch schedule' };
+      console.error('Error fetching event:', error);
+      return { success: false, error: 'Failed to fetch event' };
     }
     
-    return { success: true, data: schedule };
+    return { success: true, data: event };
   } catch (error) {
     console.error('Error:', error);
     return { success: false, error: 'Internal server error' };
   }
 }
 
-// スケジュール更新のServer Action
-export async function updateSchedule(id: string, scheduleData: any) {
+// イベント用のavailabilities取得のServer Action
+export async function getAvailabilitiesByEventId(eventId: string) {
+  try {
+    const { data: availabilities, error } = await supabase
+      .from('availabilities')
+      .select('*')
+      .eq('event_id', eventId)
+      .order('created_at', { ascending: true });
+    
+    if (error) {
+      console.error('Error fetching availabilities:', error);
+      return { success: false, error: 'Failed to fetch availabilities' };
+    }
+    
+    return { success: true, data: availabilities || [] };
+  } catch (error) {
+    console.error('Error:', error);
+    return { success: false, error: 'Internal server error' };
+  }
+}
+
+// availability追加のServer Action
+export async function addAvailability(availabilityData: {
+  event_id: string;
+  user_id: number;
+  start_date: string;
+  end_time: string;
+}) {
   try {
     const { data, error } = await supabase
-      .from('schedules')
-      .update(scheduleData)
-      .eq('id', id)
+      .from('availabilities')
+      .insert([availabilityData])
       .select();
     
     if (error) {
-      console.error('Error updating schedule:', error);
-      return { success: false, error: 'Failed to update schedule' };
-    }
-    
-    if (!data || data.length === 0) {
-      return { success: false, error: 'Schedule not found' };
+      console.error('Error adding availability:', error);
+      return { success: false, error: 'Failed to add availability' };
     }
     
     // キャッシュを無効化
-    revalidatePath('/');
-    revalidatePath(`/${id}`);
+    revalidatePath(`/${availabilityData.event_id}`);
     
     return { success: true, data };
-  } catch (error) {
-    console.error('Error:', error);
-    return { success: false, error: 'Internal server error' };
-  }
-}
-
-// エントリ追加のServer Action
-export async function addEntryToSchedule(id: string, newEntry: any) {
-  try {
-    // まず現在のスケジュールを取得
-    const { data: schedule, error: fetchError } = await supabase
-      .from('schedules')
-      .select('entries')
-      .eq('id', id)
-      .single();
-    
-    if (fetchError) {
-      if (fetchError.code === 'PGRST116') {
-        return { success: false, error: 'Schedule not found' };
-      }
-      console.error('Error fetching schedule:', fetchError);
-      return { success: false, error: 'Failed to fetch schedule' };
-    }
-    
-    // 既存のentriesに新しいエントリを追加
-    const updatedEntries = [...(schedule.entries || []), newEntry];
-    
-    // entriesを更新
-    const { error: updateError } = await supabase
-      .from('schedules')
-      .update({ entries: updatedEntries })
-      .eq('id', id);
-    
-    if (updateError) {
-      console.error('Error updating entries:', updateError);
-      return { success: false, error: 'Failed to add entry' };
-    }
-    
-    // キャッシュを無効化
-    revalidatePath(`/${id}`);
-    
-    return { success: true, message: 'Entry added successfully' };
   } catch (error) {
     console.error('Error:', error);
     return { success: false, error: 'Internal server error' };

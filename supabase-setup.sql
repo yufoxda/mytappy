@@ -1,41 +1,47 @@
--- Supabaseでスケジュールテーブルを作成するためのSQL
+-- Supabaseでイベントとavailabilitiesテーブルを作成するためのSQL
 
-CREATE TABLE schedules (
+-- eventテーブルを作成
+CREATE TABLE event (
   id UUID PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT,
-  password TEXT,
-  rows JSONB NOT NULL DEFAULT '[]',
-  cols JSONB NOT NULL DEFAULT '[]',
-  entries JSONB NOT NULL DEFAULT '[]',
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  title VARCHAR NOT NULL,
+  description VARCHAR,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- availabilitiesテーブルを作成
+CREATE TABLE availabilities (
+  id INT8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  user_id INT8 NOT NULL,
+  start_date TIMESTAMP NOT NULL,
+  end_time TIMESTAMP NOT NULL,
+  event_id UUID NOT NULL REFERENCES event(id) ON DELETE CASCADE
 );
 
 -- RLS (Row Level Security) を有効にする
-ALTER TABLE schedules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event ENABLE ROW LEVEL SECURITY;
+ALTER TABLE availabilities ENABLE ROW LEVEL SECURITY;
 
--- 全ユーザーが読み取り可能なポリシーを作成
-CREATE POLICY "Allow public read access" ON schedules
+-- eventテーブルのポリシー
+CREATE POLICY "Allow public read access on event" ON event
   FOR SELECT USING (true);
 
--- 全ユーザーが作成可能なポリシーを作成
-CREATE POLICY "Allow public insert access" ON schedules
+CREATE POLICY "Allow public insert access on event" ON event
   FOR INSERT WITH CHECK (true);
 
--- 全ユーザーが更新可能なポリシーを作成
-CREATE POLICY "Allow public update access" ON schedules
+CREATE POLICY "Allow public update access on event" ON event
   FOR UPDATE USING (true);
 
--- updated_atカラムを自動更新するトリガーを作成
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$ language 'plpgsql';
+-- availabilitiesテーブルのポリシー
+CREATE POLICY "Allow public read access on availabilities" ON availabilities
+  FOR SELECT USING (true);
 
-CREATE TRIGGER update_schedules_updated_at 
-  BEFORE UPDATE ON schedules 
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE POLICY "Allow public insert access on availabilities" ON availabilities
+  FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Allow public update access on availabilities" ON availabilities
+  FOR UPDATE USING (true);
+
+-- インデックスを作成（パフォーマンス向上のため）
+CREATE INDEX idx_availabilities_event_id ON availabilities(event_id);
+CREATE INDEX idx_availabilities_user_id ON availabilities(user_id);

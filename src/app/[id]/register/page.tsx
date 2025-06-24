@@ -1,32 +1,26 @@
 'use client';
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getScheduleById, addEntryToSchedule } from '@/lib/actions';
+import { getEventById, getAvailabilitiesByEventId, addAvailability } from '@/lib/actions';
 
 export default function RegisterPage() {
   const { id } = useParams();
   const router = useRouter();
-  const [schedule, setSchedule] = useState<any>(null);
+  const [event, setEvent] = useState<any>(null);
   const [name, setName] = useState('');
-  const [selected, setSelected] = useState<boolean[][]>([]);
+  const [startDate, setStartDate] = useState('');
+  const [endTime, setEndTime] = useState('');
   const [loading, setLoading] = useState(false);
 
 useEffect(() => {
   if (!id) return;
   
-  const fetchSchedule = async () => {
+  const fetchEvent = async () => {
     try {
-      const result = await getScheduleById(id as string);
+      const result = await getEventById(id as string);
       
       if (result.success && result.data) {
-        setSchedule(result.data);
-        // 行と列の初期化を明示的に行う
-        const initialSelected = [];
-        for (let i = 0; i < result.data.cols.length; i++) {
-          initialSelected[i] = Array(result.data.rows.length).fill(false);
-        }
-        console.log('初期化された選択状態:', initialSelected);
-        setSelected(initialSelected);
+        setEvent(result.data);
       } else {
         console.error(result.error);
       }
@@ -35,28 +29,31 @@ useEffect(() => {
     }
   };
 
-  fetchSchedule();
+  fetchEvent();
 }, [id]);
-
-  // 行:時刻, 列:日付
-const handleSelect = (rowIndex: number, colIndex: number) => {
-  console.log(`選択: 行=${rowIndex}, 列=${colIndex}`);
-  setSelected(prev => {
-    const newSelected = prev.map(row => [...row]);
-    newSelected[rowIndex][colIndex] = !newSelected[rowIndex][colIndex];
-    console.log('更新後の状態:', newSelected);
-    return newSelected;
-  });
-};
   const handleSubmit = async () => {
+    if (!name.trim() || !startDate || !endTime) {
+      alert('すべての項目を入力してください。');
+      return;
+    }
+
     setLoading(true);
-    const newEntry = {
-        user: name,
-        selected,
+    
+    // 名前を簡単なハッシュ値に変換（実際のアプリではユーザーIDを使用）
+    const nameHash = name.split('').reduce((a, b) => {
+      a = ((a << 5) - a) + b.charCodeAt(0);
+      return a & a;
+    }, 0);
+    
+    const availabilityData = {
+      event_id: id as string,
+      user_id: Math.abs(nameHash), // 負の値を避けるため絶対値を使用
+      start_date: startDate,
+      end_time: endTime,
     };
 
     try {
-        const result = await addEntryToSchedule(id as string, newEntry);
+        const result = await addAvailability(availabilityData);
 
         if (result.success) {
             router.push(`/${id}`);
@@ -71,11 +68,15 @@ const handleSelect = (rowIndex: number, colIndex: number) => {
     }
   };
 
-  if (!schedule) return <div>読み込み中...</div>;
+  if (!event) return <div>読み込み中...</div>;
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4">
-        <h2 className="text-2xl font-bold mb-4">{schedule.title} に予定を登録</h2>
+        <h2 className="text-2xl font-bold mb-4">{event.title} に予定を登録</h2>
+        {event.description && (
+          <p className="mb-6 text-gray-600">{event.description}</p>
+        )}
+        
         <div className="mb-4">
             <label className="block mb-1 font-semibold">名前</label>
             <input 
@@ -86,49 +87,33 @@ const handleSelect = (rowIndex: number, colIndex: number) => {
             />
         </div>
 
-        <p className="mb-2">参加可能な時間を選択してください</p>
-        <div className="overflow-x-auto">
-            <table className="border-collapse border w-full">
-                <thead>
-                    <tr>
-                        <th className="border"></th>
-                        {schedule.rows.map((row: string, i: number) => (
-                            <th key={i} className="border">{row}</th>
-                        ))}
-                    </tr>
-                </thead>
-                <tbody>
-                    {schedule.cols.map((col: string, i: number) => (
-                        <tr key={i}>
-                            <th className="">{col}</th>
-                            {schedule.rows.map((_: string, j: number) => (
-                                <td key={`${i}-${j}`} className="text-center">
-                                   <button
-  type="button"
-  onClick={() => handleSelect(i, j)}
-  className={`w-full h-10 rounded p-2 ${
-    selected && selected[i] && selected[i][j] === true
-      ? "bg-blue-500 text-white" 
-      : "bg-white hover:bg-gray-100 border border-gray-300"
-  }`}
->
-  {selected && selected[i] && selected[i][j] === true ? '◯' : '×'}
-</button>
-                                </td>
-                            ))}
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
+        <div className="mb-4">
+            <label className="block mb-1 font-semibold">開始日</label>
+            <input 
+                type="date"
+                className="border rounded px-3 py-2 w-full max-w-xs"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+            />
+        </div>
+
+        <div className="mb-4">
+            <label className="block mb-1 font-semibold">終了時間</label>
+            <input 
+                type="time"
+                className="border rounded px-3 py-2 w-full max-w-xs"
+                value={endTime}
+                onChange={e => setEndTime(e.target.value)}
+            />
         </div>
 
         <button
             onClick={handleSubmit}
-            disabled={loading || !name.trim()}
+            disabled={loading || !name.trim() || !startDate || !endTime}
             className="mt-6 w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:bg-blue-300"
         >
             {loading ? "登録中..." : "登録"}
         </button>
     </div>
-  )
+  );
 }

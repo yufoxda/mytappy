@@ -1,8 +1,7 @@
 'use client';
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { v4 as uuidv4 } from 'uuid';
-import { createSchedule } from '@/lib/actions';
+import { createEvent } from '@/lib/actions';
 
 // ゴミ箱アイコンのSVGコンポーネント
 const TrashIcon = () => (
@@ -115,24 +114,24 @@ export default function CreateSchedule() {
       setCols(cols.filter((_, i) => i !== index));
     }
   };
-    const handleCreate = async () => {
+  const handleCreate = async () => {
     setLoading(true);
-    const id = uuidv4();
-    const newSchedule = {
-      id,
+    const newEvent = {
       title,
       description,
-      password,
-      rows: rows.filter(row => row.trim() !== ''),
-      cols: cols.filter(col => col.trim() !== ''),
-      entries: []
     };
 
     try {
-      const result = await createSchedule(newSchedule);
+      const result = await createEvent(newEvent);
 
-      if (result.success) {
-        router.push(`/${id}`);
+      if (result.success && result.data) {
+        // Supabaseから返されたデータからIDを取得
+        const createdEventId = result.data[0]?.id;
+        if (createdEventId) {
+          router.push(`/${createdEventId}`);
+        } else {
+          alert('イベントの作成に成功しましたが、IDの取得に失敗しました。');
+        }
       } else {
         alert(`保存に失敗しました: ${result.error}`);
       }
