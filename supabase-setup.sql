@@ -2,46 +2,44 @@
 
 -- eventテーブルを作成
 CREATE TABLE event (
-  id UUID PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title VARCHAR NOT NULL,
-  description VARCHAR,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- availabilitiesテーブルを作成
-CREATE TABLE availabilities (
-  id INT8 PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  description TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  user_id INT8 NOT NULL,
-  start_date TIMESTAMP NOT NULL,
-  end_time TIMESTAMP NOT NULL,
-  event_id UUID NOT NULL REFERENCES event(id) ON DELETE CASCADE
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- RLS (Row Level Security) を有効にする
-ALTER TABLE event ENABLE ROW LEVEL SECURITY;
-ALTER TABLE availabilities ENABLE ROW LEVEL SECURITY;
+CREATE TABLE user (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR NOT NULL,
+  keycloak_id VARCHAR NOT NULL UNIQUE
+);
 
--- eventテーブルのポリシー
-CREATE POLICY "Allow public read access on event" ON event
-  FOR SELECT USING (true);
+CREATE TABLE availabilities_user (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+  start_datetime TIMESTAMP DEFAULT NOW(),
+  end_datetime TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT valid_datetime_range CHECK (end_datetime > start_datetime)
+);
 
-CREATE POLICY "Allow public insert access on event" ON event
-  FOR INSERT WITH CHECK (true);
+CREATE TABLE invitation (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id UUID NOT NULL REFERENCES event(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+);
 
-CREATE POLICY "Allow public update access on event" ON event
-  FOR UPDATE USING (true);
 
--- availabilitiesテーブルのポリシー
-CREATE POLICY "Allow public read access on availabilities" ON availabilities
-  FOR SELECT USING (true);
+CREATE TABLE availabilities (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id UUID NOT NULL REFERENCES event(id) ON DELETE CASCADE,
+  start_datetime TIMESTAMP NOT NULL,
+  end_datetime TIMESTAMP NOT NULL,
+  user_name VARCHAR NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  
+  -- 制約: 終了時刻は開始時刻より後でなければならない
+  CONSTRAINT valid_datetime_range CHECK (end_datetime > start_datetime)
+);
 
-CREATE POLICY "Allow public insert access on availabilities" ON availabilities
-  FOR INSERT WITH CHECK (true);
-
-CREATE POLICY "Allow public update access on availabilities" ON availabilities
-  FOR UPDATE USING (true);
-
--- インデックスを作成（パフォーマンス向上のため）
-CREATE INDEX idx_availabilities_event_id ON availabilities(event_id);
-CREATE INDEX idx_availabilities_user_id ON availabilities(user_id);
