@@ -5,7 +5,12 @@ import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
 
 // イベント作成のServer Action
-export async function createEvent(eventData: { title: string; description?: string }) {
+export async function createEvent(eventData: { 
+  title: string; 
+  description?: string; 
+  start_timestamp: string;
+  end_timestamp?: string | null;
+}) {
   try {
     const { data, error } = await supabase
       .from('event')

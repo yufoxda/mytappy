@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createEvent } from '@/lib/actions';
+import { time } from "console";
 
 // ゴミ箱アイコンのSVGコンポーネント
 const TrashIcon = () => (
@@ -26,37 +27,50 @@ export default function CreateSchedule() {
   const router = useRouter();
 
   // --- Stateの初期化 ---
-  const today = new Date();
-  const fiveDaysLater = new Date();
-  fiveDaysLater.setDate(today.getDate() + 5);
+  const start_day = new Date();
+  const end_day = new Date();
+  end_day.setDate(start_day.getDate() + 5);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [password, setPassword] = useState('');
-  const [startDate, setStartDate] = useState(formatDate(today));
-  const [endDate, setEndDate] = useState(formatDate(fiveDaysLater));
+
+  const [startDate, setStartDate] = useState(formatDate(start_day));
+  const [endDate, setEndDate] = useState(formatDate(end_day));
+
+  // 初期値は09:00から17:00
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('17:00');
+
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState(['']);
   const [cols, setCols] = useState(['']);
 
-  // --- 副作用フック (useEffect) ---
 
+  // --- 副作用フック (useEffect) ---
   // 開始日・終了日が変更されたら、縦の表（日付リスト）を自動更新する
   useEffect(() => {
-    if (!startDate || !endDate) return;
+    if (!startDate || !endDate) return;// 日付が未入力
     
-    const dates = [];
-    let currentDate = new Date(startDate);
+    const currentDate = new Date(startDate);
     const lastDate = new Date(endDate);
     
-    if (currentDate > lastDate) return;
-
-    while (currentDate <= lastDate) {
-      dates.push(`${currentDate.getMonth() + 1}/${currentDate.getDate()}`);
-      currentDate.setDate(currentDate.getDate() + 1);
+    if (currentDate > lastDate) {
+      //todo: enddateを赤枠で表示
+      return;
     }
+
+    // 日数を計算して一度に配列を作成
+    const daysDiff = Math.floor((lastDate.getTime() - currentDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    if (daysDiff < 1) return; // 日数が1日未満の場合は何もしない
+
+    const dates = Array.from({ length: daysDiff }, (_, i) => {
+      const date = new Date(currentDate);
+      date.setDate(currentDate.getDate() + i);
+      return `${date.getMonth() + 1}/${date.getDate()}`;
+    });
+    
+    // 空の要素を追加（UI用）
     dates.push('');
     setRows(dates);
   }, [startDate, endDate]);
@@ -65,19 +79,26 @@ export default function CreateSchedule() {
   useEffect(() => {
     if (!startTime || !endTime) return;
 
-    const times = [];
-    let [currentHour, currentMinute] = startTime.split(':').map(Number);
+    const [startHour, startMinute] = startTime.split(':').map(Number);
     const [endHour, endMinute] = endTime.split(':').map(Number);
+    const startTotalMinutes = startHour * 60 + startMinute;
     const endTotalMinutes = endHour * 60 + endMinute;
-    let currentTotalMinutes = currentHour * 60 + currentMinute;
     
-    if (currentTotalMinutes > endTotalMinutes) return;
-
-    while(currentTotalMinutes <= endTotalMinutes) {
-        times.push(`${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`);
-        currentHour++;
-        currentTotalMinutes = currentHour * 60 + currentMinute;
+    if (startTotalMinutes > endTotalMinutes) {
+      // todo: endtimeを赤枠で表示
+      return;
     }
+    
+    // 時間数を計算して一度に配列を作成（1時間刻み）
+    const hoursDiff = Math.floor((endTotalMinutes - startTotalMinutes) / 60) + 1;
+    const times = Array.from({ length: hoursDiff }, (_, i) => {
+      const totalMinutes = startTotalMinutes + (i * 60);
+      const hour = Math.floor(totalMinutes / 60);
+      const minute = totalMinutes % 60;
+      return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    });
+
+    // 空の要素を追加（UI用）
     times.push('');
     setCols(times);
   }, [startTime, endTime]);
@@ -114,11 +135,84 @@ export default function CreateSchedule() {
       setCols(cols.filter((_, i) => i !== index));
     }
   };
+
+  const time_format = (time: string): string | null => {
+    // xx:yy形式（単一時刻）の正規表現
+    const singleTimePattern = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
+    
+    // xx:yy-zz:ww または xx:yy~zz:ww形式（時間範囲）の正規表現
+    const rangeTimePattern = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])[-~]([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
+    
+    // 単一時刻の場合
+    const singleMatch = time.match(singleTimePattern);
+    if (singleMatch) {
+      const [, hour, minute] = singleMatch;
+      return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    }
+    
+    // 時間範囲の場合
+    const rangeMatch = time.match(rangeTimePattern);
+    if (rangeMatch) {
+      const [, startHour, startMinute, endHour, endMinute] = rangeMatch;
+      const separator = time.includes('-') ? '-' : '~';
+      return `${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}${separator}${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}`;
+    }
+    
+    // どちらの形式にも一致しない場合
+    return null;
+  }
+
+  // 日付と時刻からTimestamp文字列を生成する関数
+  const createTimestamp = (date: string, time: string): string | null => {
+    const formattedTime = time_format(time);
+    if (!formattedTime) return null;
+    
+    // 時間範囲の場合は開始時刻のみを使用
+    const singleTime = formattedTime.includes('-') || formattedTime.includes('~') 
+      ? formattedTime.split(/[-~]/)[0] 
+      : formattedTime;
+    
+    // PostgreSQL TIMESTAMP形式で生成 (YYYY-MM-DD HH:MM:SS)
+    return `${date} ${singleTime}:00`;
+  };
+
+  // 終了タイムスタンプを生成する関数
+  const createEndTimestamp = (startDate: string, startTime: string, endDate: string, endTime: string): string | null => {
+    // 終了日時が指定されている場合
+    if (endDate && endTime) {
+      return createTimestamp(endDate, endTime);
+    }
+    
+    // 終了日時が指定されていない場合、開始時刻が時間範囲なら終了時刻を抽出
+    if (startDate && startTime) {
+      const formattedTime = time_format(startTime);
+      if (formattedTime && (formattedTime.includes('-') || formattedTime.includes('~'))) {
+        const endTimeOnly = formattedTime.split(/[-~]/)[1];
+        return `${startDate} ${endTimeOnly}:00`;
+      }
+    }
+    
+    return null;
+  };
+
   const handleCreate = async () => {
     setLoading(true);
+    
+    // タイムスタンプを生成
+    const startTimestamp = createTimestamp(startDate, startTime);
+    const endTimestamp = createEndTimestamp(startDate, startTime, endDate, endTime);
+    
+    if (!startTimestamp) {
+      alert('開始日時が正しく入力されていません。');
+      setLoading(false);
+      return;
+    }
+    
     const newEvent = {
       title,
       description,
+      start_timestamp: startTimestamp,
+      end_timestamp: endTimestamp, // nullの場合もあり得る
     };
 
     try {
@@ -176,11 +270,25 @@ export default function CreateSchedule() {
         <div className="flex space-x-4 mb-6">
           <div className="mb-4 flex-1">
             <label className="block mb-1">開始時刻</label>
-            <input className="w-full border rounded px-3 py-2" type="time" step="3600" value={startTime} onChange={e => setStartTime(e.target.value)} />
+            <input 
+              className="w-full border rounded px-3 py-2" 
+              type="text" 
+              value={startTime} 
+              onChange={e => setStartTime(e.target.value)}
+              placeholder="例: 09:00 または 09:00-17:00"
+            />
+            <p className="text-xs text-gray-500 mt-1">時間範囲指定の場合は「09:00-17:00」または「09:00~17:00」の形式</p>
           </div>
           <div className="mb-4 flex-1">
             <label className="block mb-1">終了時刻</label>
-            <input className="w-full border rounded px-3 py-2" type="time" step="3600" value={endTime} onChange={e => setEndTime(e.target.value)} />
+            <input 
+              className="w-full border rounded px-3 py-2" 
+              type="text" 
+              value={endTime} 
+              onChange={e => setEndTime(e.target.value)}
+              placeholder="例: 17:00 (省略可能)"
+            />
+            <p className="text-xs text-gray-500 mt-1">開始時刻で時間範囲を指定した場合は省略可</p>
           </div>
         </div>
         <div className="flex space-x-4 mb-6">
