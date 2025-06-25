@@ -6,7 +6,9 @@ CREATE TABLE event (
   title VARCHAR NOT NULL,
   description TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  start_timestamp TIMESTAMP,
+  end_timestamp TIMESTAMP,
 );
 
 -- userテーブルを作成
