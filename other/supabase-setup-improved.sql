@@ -70,10 +70,9 @@ CREATE TABLE votes (
 CREATE TABLE user_availability_patterns (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  start_time TIME NOT NULL,
-  end_time TIME NOT NULL,
-  day_of_week INTEGER CHECK (day_of_week >= 0 AND day_of_week <= 6), -- 0=日曜日
-  UNIQUE(user_id, start_time, end_time, day_of_week)
+  start_time TIMESTAMP NOT NULL,
+  end_time TIMESTAMP NOT NULL,
+  UNIQUE(user_id, start_time, end_time)
 );
 
 -- パフォーマンス最適化インデックス

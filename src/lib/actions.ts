@@ -297,3 +297,86 @@ export async function getEventParticipants(eventId: string) {
     return { success: false, error: 'Internal server error' };
   }
 }
+
+// ユーザー作成または取得
+export async function createOrGetUser(name: string) {
+  try {
+    // まず同じ名前のユーザーが存在するかチェック
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('name', name)
+      .single();
+
+    if (existingUser) {
+      return { success: true, data: existingUser };
+    }
+
+    // 存在しない場合は新規作成
+    const { data: newUser, error: createError } = await supabase
+      .from('users')
+      .insert([{ name }])
+      .select()
+      .single();
+
+    if (createError) {
+      console.error('Error creating user:', createError);
+      return { success: false, error: 'Failed to create user' };
+    }
+
+    return { success: true, data: newUser };
+  } catch (error) {
+    console.error('Error:', error);
+    return { success: false, error: 'Internal server error' };
+  }
+}
+
+// 投票を追加
+export async function addVotes(eventId: string, userId: string, votes: { eventDateId: string; eventTimeId: string; isAvailable: boolean }[]) {
+  try {
+    // 既存の投票を削除（上書きのため）
+    const { error: deleteError } = await supabase
+      .from('votes')
+      .delete()
+      .eq('event_id', eventId)
+      .eq('user_id', userId);
+
+    if (deleteError) {
+      console.error('Error deleting existing votes:', deleteError);
+      return { success: false, error: 'Failed to delete existing votes' };
+    }
+
+    // 新しい投票を追加
+    const votesData = votes.map(vote => ({
+      event_id: eventId,
+      user_id: userId,
+      event_date_id: vote.eventDateId,
+      event_time_id: vote.eventTimeId,
+      is_available: vote.isAvailable
+    }));
+
+    const { data, error } = await supabase
+      .from('votes')
+      .insert(votesData)
+      .select();
+
+    if (error) {
+      console.error('Error adding votes:', error);
+      return { success: false, error: 'Failed to add votes' };
+    }
+
+    // マテリアライズドビューを手動で更新
+    const { error: refreshError } = await supabase.rpc('refresh_vote_statistics');
+    if (refreshError) {
+      console.warn('Warning: Failed to refresh vote statistics:', refreshError);
+    }
+
+    // キャッシュを無効化
+    revalidatePath(`/${eventId}`);
+
+    return { success: true, data };
+  } catch (error) {
+    console.error('Error:', error);
+    return { success: false, error: 'Internal server error' };
+  }
+}

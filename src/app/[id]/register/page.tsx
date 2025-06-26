@@ -1,119 +1,191 @@
 'use client';
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getEventById, getAvailabilitiesByEventId, addAvailability } from '@/lib/actions';
+import { getCompleteEventById, createOrGetUser, addVotes } from '@/lib/actions';
 
 export default function RegisterPage() {
   const { id } = useParams();
   const router = useRouter();
-  const [event, setEvent] = useState<any>(null);
+  const [eventData, setEventData] = useState<any>(null);
   const [name, setName] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endTime, setEndTime] = useState('');
+  const [selections, setSelections] = useState<{ [key: string]: boolean }>({});
   const [loading, setLoading] = useState(false);
 
-useEffect(() => {
-  if (!id) return;
-  
-  const fetchEvent = async () => {
-    try {
-      const result = await getEventById(id as string);
-      
-      if (result.success && result.data) {
-        setEvent(result.data);
-      } else {
-        console.error(result.error);
+  useEffect(() => {
+    if (!id) return;
+    
+    const fetchEvent = async () => {
+      try {
+        const result = await getCompleteEventById(id as string);
+        
+        if (result.success && result.data) {
+          setEventData(result.data);
+        } else {
+          console.error(result.error);
+        }
+      } catch (err) {
+        console.error(err);
       }
-    } catch (err) {
-      console.error(err);
-    }
+    };
+
+    fetchEvent();
+  }, [id]);
+
+  // テーブル形式のデータを構築する関数
+  const buildTableData = () => {
+    if (!eventData?.dates || !eventData?.times) return { dates: [], times: [] };
+    
+    const dates = eventData.dates.sort((a: any, b: any) => a.column_order - b.column_order);
+    const times = eventData.times.sort((a: any, b: any) => a.row_order - b.row_order);
+    
+    return { dates, times };
   };
 
-  fetchEvent();
-}, [id]);
+  const { dates, times } = buildTableData();
+
+  const handleCellClick = (dateId: string, timeId: string) => {
+    const key = `${dateId}-${timeId}`;
+    setSelections(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
   const handleSubmit = async () => {
-    if (!name.trim() || !startDate || !endTime) {
-      alert('すべての項目を入力してください。');
+    if (!name.trim()) {
+      alert('名前を入力してください。');
       return;
     }
 
     setLoading(true);
     
-    // 名前を簡単なハッシュ値に変換（実際のアプリではユーザーIDを使用）
-    const nameHash = name.split('').reduce((a, b) => {
-      a = ((a << 5) - a) + b.charCodeAt(0);
-      return a & a;
-    }, 0);
-    
-    const availabilityData = {
-      event_id: id as string,
-      user_id: Math.abs(nameHash), // 負の値を避けるため絶対値を使用
-      start_date: startDate,
-      end_time: endTime,
-    };
-
     try {
-        const result = await addAvailability(availabilityData);
+      // ユーザーを作成または取得
+      const userResult = await createOrGetUser(name.trim());
+      
+      if (!userResult.success) {
+        alert(`ユーザー登録に失敗しました: ${userResult.error}`);
+        return;
+      }
 
-        if (result.success) {
-            router.push(`/${id}`);
-        } else {
-            alert(`登録に失敗しました: ${result.error}`);
-        }
+      const userId = userResult.data.id;
+
+      // 投票データを準備
+      const votes: { eventDateId: string; eventTimeId: string; isAvailable: boolean }[] = [];
+      
+      dates.forEach((date: any) => {
+        times.forEach((time: any) => {
+          const key = `${date.id}-${time.id}`;
+          votes.push({
+            eventDateId: date.id,
+            eventTimeId: time.id,
+            isAvailable: selections[key] || false
+          });
+        });
+      });
+
+      // 投票を登録
+      const result = await addVotes(id as string, userId, votes);
+
+      if (result.success) {
+        router.push(`/${id}`);
+      } else {
+        alert(`登録に失敗しました: ${result.error}`);
+      }
     } catch (error) {
-        console.error('An error occurred:', error);
-        alert('エラーが発生しました。');
+      console.error('An error occurred:', error);
+      alert('エラーが発生しました。');
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
   };
 
-  if (!event) return <div>読み込み中...</div>;
+  if (!eventData) return <div className="max-w-4xl mx-auto py-8 px-4">読み込み中...</div>;
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4">
-        <h2 className="text-2xl font-bold mb-4">{event.title} に予定を登録</h2>
-        {event.description && (
-          <p className="mb-6 text-gray-600">{event.description}</p>
-        )}
-        
-        <div className="mb-4">
-            <label className="block mb-1 font-semibold">名前</label>
-            <input 
-                className="border rounded px-3 py-2 w-full max-w-xs"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="名前を入力"
-            />
-        </div>
+      <h2 className="text-2xl font-bold mb-4">{eventData.event?.title || 'イベント'} に予定を登録</h2>
+      {eventData.event?.description && (
+        <p className="mb-6 text-gray-600">{eventData.event.description}</p>
+      )}
+      
+      <div className="mb-6">
+        <label className="block mb-2 font-semibold">名前</label>
+        <input 
+          className="border rounded px-3 py-2 w-full max-w-xs"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="名前を入力"
+        />
+      </div>
 
-        <div className="mb-4">
-            <label className="block mb-1 font-semibold">開始日</label>
-            <input 
-                type="date"
-                className="border rounded px-3 py-2 w-full max-w-xs"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-            />
-        </div>
+      {dates.length > 0 && times.length > 0 ? (
+        <>
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold mb-2">参加可能な日程・時間を選択してください</h3>
+            <p className="text-sm text-gray-600 mb-4">緑色のセルをクリックして参加可能な時間帯を選択してください</p>
+          </div>
 
-        <div className="mb-4">
-            <label className="block mb-1 font-semibold">終了時間</label>
-            <input 
-                type="time"
-                className="border rounded px-3 py-2 w-full max-w-xs"
-                value={endTime}
-                onChange={e => setEndTime(e.target.value)}
-            />
-        </div>
+          <div className="overflow-x-auto mb-6">
+            <table className="min-w-full border-collapse border border-gray-300">
+              <thead>
+                <tr>
+                  <th className="border border-gray-300 px-2 py-1 bg-gray-100 text-sm">時間 \\ 日程</th>
+                  {dates.map((date: any) => (
+                    <th key={date.id} className="border border-gray-300 px-2 py-1 bg-gray-100 text-sm min-w-[80px]">
+                      {date.date_label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {times.map((time: any) => (
+                  <tr key={time.id}>
+                    <td className="border border-gray-300 px-2 py-1 bg-gray-50 text-sm font-medium">
+                      {time.time_label}
+                    </td>
+                    {dates.map((date: any) => {
+                      const key = `${date.id}-${time.id}`;
+                      const isSelected = selections[key] || false;
+                      
+                      return (
+                        <td 
+                          key={key}
+                          className="border border-gray-300 px-2 py-1 text-center cursor-pointer hover:bg-gray-100"
+                          style={{
+                            background: isSelected ? "#4caf50" : "#f5f5f5",
+                            color: isSelected ? "white" : "black"
+                          }}
+                          onClick={() => handleCellClick(date.id, time.id)}
+                        >
+                          {isSelected ? "○" : "－"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-        <button
-            onClick={handleSubmit}
-            disabled={loading || !name.trim() || !startDate || !endTime}
-            className="mt-6 w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:bg-blue-300"
-        >
-            {loading ? "登録中..." : "登録"}
-        </button>
+          <div className="mb-6 text-sm text-gray-600">
+            <p>• 緑色（○）: 参加可能</p>
+            <p>• グレー（－）: 参加不可</p>
+          </div>
+        </>
+      ) : (
+        <div className="mb-6 bg-gray-50 p-4 rounded-lg text-center text-gray-500">
+          まだ日程や時間が設定されていません
+        </div>
+      )}
+
+      <button
+        onClick={handleSubmit}
+        disabled={loading || !name.trim() || (dates.length > 0 && times.length > 0 && Object.keys(selections).length === 0)}
+        className="mt-6 w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:bg-blue-300"
+      >
+        {loading ? "登録中..." : "登録"}
+      </button>
     </div>
   );
 }
