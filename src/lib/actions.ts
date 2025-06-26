@@ -390,11 +390,13 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
   try {
     console.log(`=== Learning patterns for user ${userId}, event ${eventId} ===`);
     console.log(`Total votes received:`, votes.length);
+    console.log(`Votes details:`, votes.map(v => `${v.eventDateId}-${v.eventTimeId}: ${v.isAvailable ? '✅' : '❌'}`));
     
     // 対応可能な時間のみフィルタリング
     const availableVotes = votes.filter(vote => vote.isAvailable);
     
     console.log(`Available votes:`, availableVotes.length);
+    console.log(`Available vote IDs:`, availableVotes.map(v => `${v.eventDateId}-${v.eventTimeId}`));
     
     if (availableVotes.length === 0) {
       console.log('No available votes to learn from');
@@ -598,81 +600,111 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
       return; // 結合できたパターンがない場合は終了
     }
 
-    // 4. 既存パターンとの重複検出と統合処理
+    // 4. 既存パターンとの分割・統合処理（高度な時間帯管理）
     const duplicateIds: string[] = [];
-    const mergedPatterns: { start_time: string; end_time: string }[] = [];
+    const finalPatterns: { start_time: string; end_time: string }[] = [];
 
+    // 4.1. 各日付について、新規パターンと既存パターンの関係を分析
+    const dateGroups = new Map<string, {
+      newPatterns: typeof newPatterns,
+      existingPatterns: typeof existingPatterns
+    }>();
+
+    // 新規パターンを日付別にグループ化
     for (const newPattern of newPatterns) {
-      const newStartMinutes = timeStringToMinutes(newPattern.start_time);
-      const newEndMinutes = timeStringToMinutes(newPattern.end_time);
-      // 日付抽出の統一化（ISO形式とスペース形式の両方に対応）
-      const newDateString = newPattern.start_time.includes('T') ? 
+      const dateString = newPattern.start_time.includes('T') ? 
         newPattern.start_time.split('T')[0] : 
         newPattern.start_time.split(' ')[0];
       
-      console.log(`Checking new pattern: ${newPattern.start_time} - ${newPattern.end_time}`);
+      if (!dateGroups.has(dateString)) {
+        dateGroups.set(dateString, { newPatterns: [], existingPatterns: [] });
+      }
+      dateGroups.get(dateString)!.newPatterns.push(newPattern);
+    }
+
+    // 既存パターンを日付別にグループ化
+    for (const existingPattern of existingPatterns) {
+      const dateString = existingPattern.start_time.includes('T') ? 
+        existingPattern.start_time.split('T')[0] : 
+        existingPattern.start_time.split(' ')[0];
       
-      let foundOverlap = false;
-      let bestMergedStart = newStartMinutes;
-      let bestMergedEnd = newEndMinutes;
-      const overlappingIds: string[] = [];
+      if (!dateGroups.has(dateString)) {
+        dateGroups.set(dateString, { newPatterns: [], existingPatterns: [] });
+      }
+      dateGroups.get(dateString)!.existingPatterns.push(existingPattern);
+    }
+
+    // 4.2. 各日付について時間帯の分割・統合処理を実行
+    for (const [dateString, { newPatterns: dayNewPatterns, existingPatterns: dayExistingPatterns }] of dateGroups) {
+      console.log(`\n🔍 Processing date ${dateString}: ${dayNewPatterns.length} new patterns, ${dayExistingPatterns.length} existing patterns`);
+      console.log(`New patterns:`, dayNewPatterns.map(p => `${p.start_time} - ${p.end_time}`));
+      console.log(`Existing patterns:`, dayExistingPatterns.map(p => `${p.start_time} - ${p.end_time} (ID: ${p.id})`));
+
+      if (dayNewPatterns.length === 0) {
+        // 新規パターンがない場合は既存パターンをそのまま保持
+        finalPatterns.push(...dayExistingPatterns);
+        continue;
+      }
+
+      // 新規パターンがある場合：スマートな統合・分割処理
       
-      // 既存パターンとの重複チェック（同一日付内のすべてのパターンをチェック）
-      for (const existing of existingPatterns) {
-        const existingStartMinutes = timeStringToMinutes(existing.start_time);
-        const existingEndMinutes = timeStringToMinutes(existing.end_time);
-        // 日付抽出の統一化（ISO形式とスペース形式の両方に対応）
-        const existingDateString = existing.start_time.includes('T') ? 
-          existing.start_time.split('T')[0] : 
-          existing.start_time.split(' ')[0];
-        
-        console.log(`Comparing with existing: ${existing.start_time} - ${existing.end_time}`);
-        
-        // 同じ日付かチェック
-        if (newDateString !== existingDateString) {
-          console.log(`Different dates: ${newDateString} vs ${existingDateString}`);
-          continue;
-        }
-        
-        // 時間重複判定（重複または隣接している場合）
-        const isOverlapping = (
-          newStartMinutes <= existingEndMinutes && newEndMinutes >= existingStartMinutes
-        ) || (
-          // 隣接している場合も統合対象とする（60分以内の差）
-          Math.abs(newEndMinutes - existingStartMinutes) <= 60 ||
-          Math.abs(existingEndMinutes - newStartMinutes) <= 60
-        );
-        
-        console.log(`Overlap check: newStart=${newStartMinutes}, newEnd=${newEndMinutes}, existingStart=${existingStartMinutes}, existingEnd=${existingEndMinutes}, isOverlapping=${isOverlapping}`);
-        
-        if (isOverlapping) {
-          foundOverlap = true;
-          overlappingIds.push(existing.id);
-          
-          // より広い時間範囲を計算
-          bestMergedStart = Math.min(bestMergedStart, existingStartMinutes);
-          bestMergedEnd = Math.max(bestMergedEnd, existingEndMinutes);
-          
-          console.log(`Found overlap! Updated range: ${bestMergedStart} - ${bestMergedEnd} minutes`);
-        }
+      // 4.3. 新規パターンから連続する時間範囲を作成
+      const newTimeRanges: { start: number; end: number }[] = [];
+      for (const pattern of dayNewPatterns) {
+        newTimeRanges.push({
+          start: timeStringToMinutes(pattern.start_time),
+          end: timeStringToMinutes(pattern.end_time)
+        });
       }
       
-      if (foundOverlap) {
-        // 重複するパターンをすべて削除対象に追加
-        duplicateIds.push(...overlappingIds);
+      // 新規パターンをソートして連続性をチェック
+      newTimeRanges.sort((a, b) => a.start - b.start);
+      console.log(`📊 New time ranges:`, newTimeRanges.map(r => `${r.start}-${r.end}min`));
+      
+      // 4.4. 新規パターンを連続する範囲にマージ
+      const mergedNewRanges: { start: number; end: number }[] = [];
+      if (newTimeRanges.length > 0) {
+        let currentStart = newTimeRanges[0].start;
+        let currentEnd = newTimeRanges[0].end;
         
-        // 統合されたパターンを追加
-        const mergedPattern = {
-          start_time: minutesToTimeString(bestMergedStart, newDateString),
-          end_time: minutesToTimeString(bestMergedEnd, newDateString)
-        };
-        mergedPatterns.push(mergedPattern);
+        for (let i = 1; i < newTimeRanges.length; i++) {
+          const range = newTimeRanges[i];
+          
+          // 隣接または重複している場合は統合
+          if (range.start <= currentEnd) {
+            currentEnd = Math.max(currentEnd, range.end);
+            console.log(`🔗 Merged new ranges: ${currentStart}-${currentEnd}min`);
+          } else {
+            // 隙間がある場合は分割
+            mergedNewRanges.push({ start: currentStart, end: currentEnd });
+            console.log(`💾 Saved new range: ${currentStart}-${currentEnd}min`);
+            console.log(`⚡ Gap detected: ${currentEnd}min to ${range.start}min (${range.start - currentEnd}min gap)`);
+            currentStart = range.start;
+            currentEnd = range.end;
+          }
+        }
         
-        console.log(`Merged pattern: ${mergedPattern.start_time} - ${mergedPattern.end_time}`);
-      } else {
-        // 重複がない場合は新規パターンとして追加
-        mergedPatterns.push(newPattern);
-        console.log(`New pattern added: ${newPattern.start_time} - ${newPattern.end_time}`);
+        mergedNewRanges.push({ start: currentStart, end: currentEnd });
+        console.log(`🏁 Final new range: ${currentStart}-${currentEnd}min`);
+      }
+      
+      console.log(`\n📈 Merged new ranges for ${dateString}: ${mergedNewRanges.length}`);
+      mergedNewRanges.forEach((range, i) => {
+        console.log(`  ${i + 1}. ${range.start}-${range.end}min (${Math.floor(range.start/60)}:${String(range.start%60).padStart(2,'0')}-${Math.floor(range.end/60)}:${String(range.end%60).padStart(2,'0')})`);
+      });
+      
+      // 4.5. 既存パターンを削除対象に追加
+      for (const pattern of dayExistingPatterns) {
+        duplicateIds.push(pattern.id);
+      }
+      
+      // 4.6. 新規パターンから最終パターンを作成
+      for (const range of mergedNewRanges) {
+        finalPatterns.push({
+          start_time: minutesToTimeString(range.start, dateString),
+          end_time: minutesToTimeString(range.end, dateString)
+        });
+        console.log(`✨ Final pattern for ${dateString}: ${minutesToTimeString(range.start, dateString)} - ${minutesToTimeString(range.end, dateString)}`);
       }
     }
 
@@ -680,7 +712,7 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
     if (duplicateIds.length > 0) {
       // 重複を除去
       const uniqueDuplicateIds = [...new Set(duplicateIds)];
-      console.log(`Deleting ${uniqueDuplicateIds.length} duplicate patterns:`, uniqueDuplicateIds);
+      console.log(`\n🗑️ Deleting ${uniqueDuplicateIds.length} duplicate patterns:`, uniqueDuplicateIds);
       
       const { error: deleteError } = await supabase
         .from('user_availability_patterns')
@@ -688,31 +720,38 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
         .in('id', uniqueDuplicateIds);
 
       if (deleteError) {
-        console.warn('Warning: Failed to delete duplicate patterns:', deleteError);
+        console.warn('❌ Warning: Failed to delete duplicate patterns:', deleteError);
       } else {
-        console.log(`Successfully deleted ${uniqueDuplicateIds.length} duplicate patterns`);
+        console.log(`✅ Successfully deleted ${uniqueDuplicateIds.length} duplicate patterns`);
       }
+    } else {
+      console.log(`\n🔍 No duplicate patterns to delete`);
     }
 
     // 6. 統合されたパターンを登録
-    if (mergedPatterns.length > 0) {
-      const patternsToInsert = mergedPatterns.map(pattern => ({
+    if (finalPatterns.length > 0) {
+      const patternsToInsert = finalPatterns.map(pattern => ({
         user_id: userId,
         start_time: pattern.start_time,
         end_time: pattern.end_time
       }));
 
-      console.log(`Inserting ${patternsToInsert.length} merged patterns:`, patternsToInsert);
+      console.log(`\n💾 Inserting ${patternsToInsert.length} final patterns:`);
+      patternsToInsert.forEach((pattern, i) => {
+        console.log(`  ${i + 1}. ${pattern.start_time} - ${pattern.end_time}`);
+      });
 
       const { error: insertError } = await supabase
         .from('user_availability_patterns')
         .insert(patternsToInsert);
 
       if (insertError) {
-        console.warn('Warning: Failed to insert merged patterns:', insertError);
+        console.warn('❌ Warning: Failed to insert final patterns:', insertError);
       } else {
-        console.log(`Successfully learned ${mergedPatterns.length} availability patterns for user ${userId}`);
+        console.log(`✅ Successfully learned ${finalPatterns.length} availability patterns for user ${userId}`);
       }
+    } else {
+      console.log(`\n⚠️ No final patterns to insert`);
     }
   } catch (error) {
     console.warn('Warning: Failed to learn user availability patterns:', error);
