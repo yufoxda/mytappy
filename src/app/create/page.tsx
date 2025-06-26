@@ -141,7 +141,7 @@ export default function CreateSchedule() {
     const singleTimePattern = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
     
     // xx:yy-zz:ww または xx:yy~zz:ww形式（時間範囲）の正規表現
-    const rangeTimePattern = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])[-~]([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
+    const rangeTimePattern = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])[-~～－]([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
     
     // 単一時刻の場合
     const singleMatch = time.match(singleTimePattern);
@@ -176,43 +176,34 @@ export default function CreateSchedule() {
     return `${date} ${singleTime}:00`;
   };
 
-  // 終了タイムスタンプを生成する関数
-  const createEndTimestamp = (startDate: string, startTime: string, endDate: string, endTime: string): string | null => {
-    // 終了日時が指定されている場合
-    if (endDate && endTime) {
-      return createTimestamp(endDate, endTime);
+  const checkTimeFormat = (time_arry: string[]): boolean => {
+    for (let i = 0; i < time_arry.length; i++) {
+      const time = time_arry[i];
+      if (time.trim() === '') continue; // 空文字列はスキップ
+      if (time_format(time) !== null) continue;
+      return false;
     }
-    
-    // 終了日時が指定されていない場合、開始時刻が時間範囲なら終了時刻を抽出
-    if (startDate && startTime) {
-      const formattedTime = time_format(startTime);
-      if (formattedTime && (formattedTime.includes('-') || formattedTime.includes('~'))) {
-        const endTimeOnly = formattedTime.split(/[-~]/)[1];
-        return `${startDate} ${endTimeOnly}:00`;
-      }
-    }
-    
-    return null;
-  };
+    return true;
+  }
 
   const handleCreate = async () => {
     setLoading(true);
     
-    // タイムスタンプを生成
-    const startTimestamp = createTimestamp(startDate, startTime);
-    const endTimestamp = createEndTimestamp(startDate, startTime, endDate, endTime);
-    
-    if (!startTimestamp) {
-      alert('開始日時が正しく入力されていません。');
+    // 入力値のバリデーション
+    if (!title.trim()) {
+      alert('イベント名を入力してください。');
       setLoading(false);
       return;
     }
+
+    const is_time_format_ok = checkTimeFormat(rows);
+    
     
     const newEvent = {
       title,
       description,
-      start_timestamp: startTimestamp,
-      end_timestamp: endTimestamp, // nullの場合もあり得る
+      start_timestamp: is_time_format_ok ? createTimestamp(startDate,startTime):null, // nullの場合もあり得る
+      end_timestamp: is_time_format_ok ? createTimestamp(endDate,endTime):null, // nullの場合もあり得る
     };
 
     try {
@@ -271,7 +262,7 @@ export default function CreateSchedule() {
           <div className="mb-4 flex-1">
             <label className="block mb-1">開始時刻</label>
             <input 
-              className="w-full border rounded px-3 py-2" 
+              className="w-full border rounded px-3 py-2"
               type="text" 
               value={startTime} 
               onChange={e => setStartTime(e.target.value)}
@@ -282,7 +273,7 @@ export default function CreateSchedule() {
           <div className="mb-4 flex-1">
             <label className="block mb-1">終了時刻</label>
             <input 
-              className="w-full border rounded px-3 py-2" 
+              className="w-full border rounded px-3 py-2"
               type="text" 
               value={endTime} 
               onChange={e => setEndTime(e.target.value)}

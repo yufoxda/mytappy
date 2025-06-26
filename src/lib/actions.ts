@@ -8,7 +8,7 @@ import { supabase } from './supabase';
 export async function createEvent(eventData: { 
   title: string; 
   description?: string; 
-  start_timestamp: string;
+  start_timestamp: string | null;
   end_timestamp?: string | null;
 }) {
   try {
