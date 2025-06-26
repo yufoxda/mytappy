@@ -388,10 +388,16 @@ export async function addVotes(eventId: string, userId: string, votes: { eventDa
 // ユーザーの対応可能時間パターンを学習・登録（連続時間帯結合・高度な重複検出・統合処理）
 async function learnUserAvailabilityPatterns(userId: string, eventId: string, votes: { eventDateId: string; eventTimeId: string; isAvailable: boolean }[]) {
   try {
+    console.log(`=== Learning patterns for user ${userId}, event ${eventId} ===`);
+    console.log(`Total votes received:`, votes.length);
+    
     // 対応可能な時間のみフィルタリング
     const availableVotes = votes.filter(vote => vote.isAvailable);
     
+    console.log(`Available votes:`, availableVotes.length);
+    
     if (availableVotes.length === 0) {
+      console.log('No available votes to learn from');
       return; // 対応可能な時間がない場合は学習しない
     }
 
@@ -399,6 +405,11 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
     const existingPatternsResult = await getUserAvailabilityPatterns(userId);
     const existingPatterns = existingPatternsResult.success && existingPatternsResult.data ? 
       existingPatternsResult.data : [];
+      
+    console.log(`Existing patterns:`, existingPatterns.length);
+    existingPatterns.forEach((pattern, index) => {
+      console.log(`  ${index + 1}. ${pattern.start_time} - ${pattern.end_time}`);
+    });
 
     // 2. 新規投票データから時間パターンを抽出し、連続する時間帯を結合
     const individualPatterns: { start_time: string; end_time: string; date: string }[] = [];
@@ -480,8 +491,35 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
 
     // 文字列時刻を分に変換するヘルパー関数
     const timeStringToMinutes = (timeString: string): number => {
-      const timePart = timeString.split(' ')[1]; // "YYYY-MM-DD HH:mm:ss" から "HH:mm:ss" を取得
+      if (!timeString || typeof timeString !== 'string') {
+        console.warn('Invalid timeString in learning:', timeString);
+        return 0;
+      }
+      
+      // PostgreSQLのTIMESTAMP形式の場合: "2024-12-25T09:00:00" または "2024-12-25 09:00:00"
+      let timePart: string;
+      if (timeString.includes('T')) {
+        // ISO形式の場合
+        timePart = timeString.split('T')[1].split('.')[0]; // "09:00:00"
+      } else if (timeString.includes(' ')) {
+        // スペース区切りの場合
+        timePart = timeString.split(' ')[1]; // "09:00:00"
+      } else {
+        // 時刻のみの場合
+        timePart = timeString; // "09:00:00"
+      }
+      
+      if (!timePart) {
+        console.warn('Could not extract time part from:', timeString);
+        return 0;
+      }
+      
       const [hours, minutes] = timePart.split(':').map(Number);
+      if (isNaN(hours) || isNaN(minutes)) {
+        console.warn('Invalid time format:', timePart);
+        return 0;
+      }
+      
       return hours * 60 + minutes;
     };
 
@@ -567,18 +605,32 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
     for (const newPattern of newPatterns) {
       const newStartMinutes = timeStringToMinutes(newPattern.start_time);
       const newEndMinutes = timeStringToMinutes(newPattern.end_time);
-      const newDateString = newPattern.start_time.split(' ')[0];
+      // 日付抽出の統一化（ISO形式とスペース形式の両方に対応）
+      const newDateString = newPattern.start_time.includes('T') ? 
+        newPattern.start_time.split('T')[0] : 
+        newPattern.start_time.split(' ')[0];
+      
+      console.log(`Checking new pattern: ${newPattern.start_time} - ${newPattern.end_time}`);
       
       let foundOverlap = false;
+      let bestMergedStart = newStartMinutes;
+      let bestMergedEnd = newEndMinutes;
+      const overlappingIds: string[] = [];
       
-      // 既存パターンとの重複チェック
+      // 既存パターンとの重複チェック（同一日付内のすべてのパターンをチェック）
       for (const existing of existingPatterns) {
         const existingStartMinutes = timeStringToMinutes(existing.start_time);
         const existingEndMinutes = timeStringToMinutes(existing.end_time);
-        const existingDateString = existing.start_time.split(' ')[0];
+        // 日付抽出の統一化（ISO形式とスペース形式の両方に対応）
+        const existingDateString = existing.start_time.includes('T') ? 
+          existing.start_time.split('T')[0] : 
+          existing.start_time.split(' ')[0];
+        
+        console.log(`Comparing with existing: ${existing.start_time} - ${existing.end_time}`);
         
         // 同じ日付かチェック
         if (newDateString !== existingDateString) {
+          console.log(`Different dates: ${newDateString} vs ${existingDateString}`);
           continue;
         }
         
@@ -591,37 +643,54 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
           Math.abs(existingEndMinutes - newStartMinutes) <= 60
         );
         
+        console.log(`Overlap check: newStart=${newStartMinutes}, newEnd=${newEndMinutes}, existingStart=${existingStartMinutes}, existingEnd=${existingEndMinutes}, isOverlapping=${isOverlapping}`);
+        
         if (isOverlapping) {
           foundOverlap = true;
-          duplicateIds.push(existing.id);
+          overlappingIds.push(existing.id);
           
-          // 統合された時間範囲を計算
-          const mergedStartMinutes = Math.min(newStartMinutes, existingStartMinutes);
-          const mergedEndMinutes = Math.max(newEndMinutes, existingEndMinutes);
+          // より広い時間範囲を計算
+          bestMergedStart = Math.min(bestMergedStart, existingStartMinutes);
+          bestMergedEnd = Math.max(bestMergedEnd, existingEndMinutes);
           
-          mergedPatterns.push({
-            start_time: minutesToTimeString(mergedStartMinutes, newDateString),
-            end_time: minutesToTimeString(mergedEndMinutes, newDateString)
-          });
-          break; // 1つでも重複が見つかったら統合処理
+          console.log(`Found overlap! Updated range: ${bestMergedStart} - ${bestMergedEnd} minutes`);
         }
       }
       
-      // 重複がない場合は新規パターンとして追加
-      if (!foundOverlap) {
+      if (foundOverlap) {
+        // 重複するパターンをすべて削除対象に追加
+        duplicateIds.push(...overlappingIds);
+        
+        // 統合されたパターンを追加
+        const mergedPattern = {
+          start_time: minutesToTimeString(bestMergedStart, newDateString),
+          end_time: minutesToTimeString(bestMergedEnd, newDateString)
+        };
+        mergedPatterns.push(mergedPattern);
+        
+        console.log(`Merged pattern: ${mergedPattern.start_time} - ${mergedPattern.end_time}`);
+      } else {
+        // 重複がない場合は新規パターンとして追加
         mergedPatterns.push(newPattern);
+        console.log(`New pattern added: ${newPattern.start_time} - ${newPattern.end_time}`);
       }
     }
 
     // 5. 重複するパターンを削除
     if (duplicateIds.length > 0) {
+      // 重複を除去
+      const uniqueDuplicateIds = [...new Set(duplicateIds)];
+      console.log(`Deleting ${uniqueDuplicateIds.length} duplicate patterns:`, uniqueDuplicateIds);
+      
       const { error: deleteError } = await supabase
         .from('user_availability_patterns')
         .delete()
-        .in('id', duplicateIds);
+        .in('id', uniqueDuplicateIds);
 
       if (deleteError) {
         console.warn('Warning: Failed to delete duplicate patterns:', deleteError);
+      } else {
+        console.log(`Successfully deleted ${uniqueDuplicateIds.length} duplicate patterns`);
       }
     }
 
@@ -632,6 +701,8 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
         start_time: pattern.start_time,
         end_time: pattern.end_time
       }));
+
+      console.log(`Inserting ${patternsToInsert.length} merged patterns:`, patternsToInsert);
 
       const { error: insertError } = await supabase
         .from('user_availability_patterns')
@@ -679,6 +750,11 @@ export async function suggestVotesBasedOnPatterns(userId: string, eventId: strin
       return { success: true, data: [] }; // パターンがない場合は空の提案
     }
 
+    console.log('User patterns for suggestions:', patternsResult.data);
+    patternsResult.data.forEach((pattern, index) => {
+      console.log(`Pattern ${index}: start="${pattern.start_time}" (type: ${typeof pattern.start_time}), end="${pattern.end_time}" (type: ${typeof pattern.end_time})`);
+    });
+
     // イベントの完全情報を取得
     const eventResult = await getCompleteEventById(eventId);
     if (!eventResult.success || !eventResult.data) {
@@ -695,26 +771,86 @@ export async function suggestVotesBasedOnPatterns(userId: string, eventId: strin
         const parsedTime = parseTimeLabel(time.time_label);
 
         if (parsedDate.isDateRecognized && parsedTime.isTimeRecognized && parsedDate.date && parsedTime.startTime) {
-          // 候補日時のTIMESTAMP作成
+          // タイムゾーンフリーな候補日時の作成
           const [startHour, startMinute] = parsedTime.startTime.split(':').map(Number);
-          const candidateStart = new Date(parsedDate.date);
-          candidateStart.setHours(startHour, startMinute, 0, 0);
+          
+          // 日付文字列を作成
+          const year = parsedDate.date.getFullYear();
+          const month = String(parsedDate.date.getMonth() + 1).padStart(2, '0');
+          const day = String(parsedDate.date.getDate()).padStart(2, '0');
+          const dateString = `${year}-${month}-${day}`;
+          
+          // 開始・終了時刻を文字列で作成
+          const startTimeString = `${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}:00`;
+          const candidateStartTimestamp = `${dateString} ${startTimeString}`;
 
-          let candidateEnd = new Date(candidateStart);
+          let candidateEndTimestamp: string;
           if (parsedTime.endTime) {
             const [endHour, endMinute] = parsedTime.endTime.split(':').map(Number);
-            candidateEnd.setHours(endHour, endMinute, 0, 0);
+            const endTimeString = `${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}:00`;
+            candidateEndTimestamp = `${dateString} ${endTimeString}`;
           } else {
-            candidateEnd.setHours(startHour + 1, startMinute, 0, 0); // デフォルト1時間
+            const endHour = startHour + 1;
+            const endTimeString = `${String(endHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}:00`;
+            candidateEndTimestamp = `${dateString} ${endTimeString}`;
           }
 
-          // パターンとマッチするかチェック
-          const isAvailable = patternsResult.data.some(pattern => {
-            const patternStart = new Date(pattern.start_time);
-            const patternEnd = new Date(pattern.end_time);
+          // 文字列時刻を分に変換するヘルパー関数
+          const timeStringToMinutes = (timeString: string): number => {
+            if (!timeString || typeof timeString !== 'string') {
+              console.warn('Invalid timeString:', timeString);
+              return 0;
+            }
+            
+            // PostgreSQLのTIMESTAMP形式の場合: "2024-12-25T09:00:00" または "2024-12-25 09:00:00"
+            let timePart: string;
+            if (timeString.includes('T')) {
+              // ISO形式の場合
+              timePart = timeString.split('T')[1].split('.')[0]; // "09:00:00"
+            } else if (timeString.includes(' ')) {
+              // スペース区切りの場合
+              timePart = timeString.split(' ')[1]; // "09:00:00"
+            } else {
+              // 時刻のみの場合
+              timePart = timeString; // "09:00:00"
+            }
+            
+            if (!timePart) {
+              console.warn('Could not extract time part from:', timeString);
+              return 0;
+            }
+            
+            const [hours, minutes] = timePart.split(':').map(Number);
+            if (isNaN(hours) || isNaN(minutes)) {
+              console.warn('Invalid time format:', timePart);
+              return 0;
+            }
+            
+            return hours * 60 + minutes;
+          };
 
-            // 時間の重複チェック（候補時間がパターン時間内に含まれるか）
-            return candidateStart >= patternStart && candidateEnd <= patternEnd;
+          // パターンとマッチするかチェック（文字列ベースの比較）
+          const candidateStartMinutes = timeStringToMinutes(candidateStartTimestamp);
+          const candidateEndMinutes = timeStringToMinutes(candidateEndTimestamp);
+          // 日付抽出の統一化（ISO形式とスペース形式の両方に対応）
+          const candidateDateString = candidateStartTimestamp.includes('T') ? 
+            candidateStartTimestamp.split('T')[0] : 
+            candidateStartTimestamp.split(' ')[0];
+
+          const isAvailable = patternsResult.data.some(pattern => {
+            const patternStartMinutes = timeStringToMinutes(pattern.start_time);
+            const patternEndMinutes = timeStringToMinutes(pattern.end_time);
+            // 日付抽出の統一化（ISO形式とスペース形式の両方に対応）
+            const patternDateString = pattern.start_time.includes('T') ? 
+              pattern.start_time.split('T')[0] : 
+              pattern.start_time.split(' ')[0];
+
+            console.log(`Checking candidate ${candidateDateString} ${candidateStartMinutes}-${candidateEndMinutes} against pattern ${patternDateString} ${patternStartMinutes}-${patternEndMinutes}`);
+
+            // 同じ日付で、候補時間がパターン時間内に含まれるかチェック
+            return candidateDateString === patternDateString &&
+                   candidateStartMinutes >= patternStartMinutes && 
+                   candidateEndMinutes <= patternEndMinutes;
           });
 
           suggestions.push({
