@@ -3,29 +3,76 @@
 import { createClient } from '@supabase/supabase-js';
 import { revalidatePath } from 'next/cache';
 import { supabase } from './supabase';
+import { type NormalizedEventData } from './labelParser';
 
-// イベント作成のServer Action
+// イベント作成のServer Action（正規化設計・改良版テーブル名）
 export async function createEvent(eventData: { 
   title: string; 
   description?: string; 
-  start_timestamp: string | null;
-  end_timestamp?: string | null;
+  eventData: NormalizedEventData;
 }) {
   try {
-    const { data, error } = await supabase
-      .from('event')
-      .insert([eventData])
-      .select();
+    // 1. イベントを作成
+    const { data: eventResult, error: eventError } = await supabase
+      .from('events')
+      .insert([{
+        title: eventData.title,
+        description: eventData.description
+      }])
+      .select()
+      .single();
     
-    if (error) {
-      console.error('Error creating event:', error);
+    if (eventError) {
+      console.error('Error creating event:', eventError);
       return { success: false, error: 'Failed to create event' };
+    }
+
+    const eventId = eventResult.id;
+
+    // 2. event_datesレコードを作成
+    if (eventData.eventData.dates.length > 0) {
+      const eventDates = eventData.eventData.dates.map(date => ({
+        event_id: eventId,
+        date_label: date.date_label,
+        column_order: date.col_order
+      }));
+
+      const { data: dateResults, error: datesError } = await supabase
+        .from('event_dates')
+        .insert(eventDates)
+        .select();
+
+      if (datesError) {
+        console.error('Error creating event dates:', datesError);
+        return { success: false, error: 'Failed to create event dates' };
+      }
+
+      // 3. event_timesレコードを作成
+      const eventTimes = eventData.eventData.times.map(time => ({
+        event_id: eventId,
+        time_label: time.time_label,
+        row_order: time.row_order
+      }));
+
+      const { data: timeResults, error: timesError } = await supabase
+        .from('event_times')
+        .insert(eventTimes)
+        .select();
+
+      if (timesError) {
+        console.error('Error creating event times:', timesError);
+        return { success: false, error: 'Failed to create event times' };
+      }
+
+      // Note: time_slotsはビューのため、event_datesとevent_timesの作成により自動的に生成される
+      
+      console.log(`Event created successfully with ${dateResults!.length} dates and ${timeResults!.length} times`);
     }
     
     // キャッシュを無効化してデータを再取得
     revalidatePath('/');
     
-    return { success: true, data };
+    return { success: true, eventId: eventId, data: eventResult };
   } catch (error) {
     console.error('Error:', error);
     return { success: false, error: 'Internal server error' };
@@ -36,7 +83,7 @@ export async function createEvent(eventData: {
 export async function getEvents() {
   try {
     const { data: events, error } = await supabase
-      .from('event')
+      .from('events')
       .select('*')
       .order('created_at', { ascending: false });
     
@@ -56,7 +103,7 @@ export async function getEvents() {
 export async function getEventById(id: string) {
   try {
     const { data: event, error } = await supabase
-      .from('event')
+      .from('events')
       .select('*')
       .eq('id', id)
       .single();
@@ -119,6 +166,74 @@ export async function addAvailability(availabilityData: {
     revalidatePath(`/${availabilityData.event_id}`);
     
     return { success: true, data };
+  } catch (error) {
+    console.error('Error:', error);
+    return { success: false, error: 'Internal server error' };
+  }
+}
+
+// 完全なイベント情報取得（イベント詳細、候補日、候補時刻、投票情報）
+export async function getCompleteEventById(id: string) {
+  try {
+    // 1. イベント基本情報を取得
+    const { data: event, error: eventError } = await supabase
+      .from('events')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (eventError) {
+      if (eventError.code === 'PGRST116') {
+        return { success: false, error: 'Event not found' };
+      }
+      console.error('Error fetching event:', eventError);
+      return { success: false, error: 'Failed to fetch event' };
+    }
+
+    // 2. 候補日を取得
+    const { data: eventDates, error: datesError } = await supabase
+      .from('event_dates')
+      .select('*')
+      .eq('event_id', id)
+      .order('column_order');
+
+    if (datesError) {
+      console.error('Error fetching event dates:', datesError);
+      return { success: false, error: 'Failed to fetch event dates' };
+    }
+
+    // 3. 候補時刻を取得
+    const { data: eventTimes, error: timesError } = await supabase
+      .from('event_times')
+      .select('*')
+      .eq('event_id', id)
+      .order('row_order');
+
+    if (timesError) {
+      console.error('Error fetching event times:', timesError);
+      return { success: false, error: 'Failed to fetch event times' };
+    }
+
+    // 4. 投票統計を取得（マテリアライズドビューから）
+    const { data: voteStats, error: statsError } = await supabase
+      .from('event_vote_statistics')
+      .select('*')
+      .eq('event_id', id);
+
+    if (statsError) {
+      console.error('Error fetching vote statistics:', statsError);
+      // 投票統計の取得エラーは致命的でないため、空配列を使用
+    }
+
+    return { 
+      success: true, 
+      data: {
+        event,
+        dates: eventDates || [],
+        times: eventTimes || [],
+        voteStats: voteStats || []
+      }
+    };
   } catch (error) {
     console.error('Error:', error);
     return { success: false, error: 'Internal server error' };

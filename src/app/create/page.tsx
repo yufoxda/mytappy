@@ -2,7 +2,16 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createEvent } from '@/lib/actions';
-import { time } from "console";
+import { 
+  generateNormalizedEventData,
+  validateTableSlots, 
+  suggestTimeSlots,
+  parseDateLabel,
+  parseTimeLabel,
+  sortTableSlots,
+  type UITableInput,
+  type NormalizedEventData
+} from '@/lib/labelParser';
 
 // ゴミ箱アイコンのSVGコンポーネント
 const TrashIcon = () => (
@@ -43,12 +52,12 @@ export default function CreateSchedule() {
   const [endTime, setEndTime] = useState('17:00');
 
   const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState(['']);
-  const [cols, setCols] = useState(['']);
+  const [rows, setRows] = useState(['']); // 縦軸：時間
+  const [cols, setCols] = useState(['']); // 横軸：日付
 
 
   // --- 副作用フック (useEffect) ---
-  // 開始日・終了日が変更されたら、縦の表（日付リスト）を自動更新する
+  // 開始日・終了日が変更されたら、横軸（日付リスト）を自動更新する
   useEffect(() => {
     if (!startDate || !endDate) return;// 日付が未入力
     
@@ -72,10 +81,10 @@ export default function CreateSchedule() {
     
     // 空の要素を追加（UI用）
     dates.push('');
-    setRows(dates);
+    setCols(dates); // 横軸に日付を設定
   }, [startDate, endDate]);
 
-  // 開始時刻・終了時刻が変更されたら、横の表（時刻リスト）を自動更新する
+  // 開始時刻・終了時刻が変更されたら、縦軸（時刻リスト）を自動更新する
   useEffect(() => {
     if (!startTime || !endTime) return;
 
@@ -100,13 +109,13 @@ export default function CreateSchedule() {
 
     // 空の要素を追加（UI用）
     times.push('');
-    setCols(times);
+    setRows(times); // 縦軸に時間を設定
   }, [startTime, endTime]);
 
 
   // --- イベントハンドラ ---
 
-  const handleRowChange = (index: number, value: string) => {
+  const handleTimeChange = (index: number, value: string) => {
     const newRows = [...rows];
     newRows[index] = value;
     if (index === rows.length - 1 && value.trim() !== '') {
@@ -115,7 +124,7 @@ export default function CreateSchedule() {
     setRows(newRows);
   };
 
-  const handleColChange = (index: number, value: string) => {
+  const handleDateChange = (index: number, value: string) => {
     const newCols = [...cols];
     newCols[index] = value;
     if (index === cols.length - 1 && value.trim() !== '') {
@@ -124,105 +133,85 @@ export default function CreateSchedule() {
     setCols(newCols);
   };
 
-  const removeRow = (index: number) => {
+  const removeTime = (index: number) => {
     if (rows.length > 1) {
       setRows(rows.filter((_, i) => i !== index));
     }
   };
 
-  const removeCol = (index: number) => {
+  const removeDate = (index: number) => {
     if (cols.length > 1) {
       setCols(cols.filter((_, i) => i !== index));
     }
   };
 
-  const time_format = (time: string): string | null => {
-    // xx:yy形式（単一時刻）の正規表現
-    const singleTimePattern = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
-    
-    // xx:yy-zz:ww または xx:yy~zz:ww形式（時間範囲）の正規表現
-    const rangeTimePattern = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])[-~～－]([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
-    
-    // 単一時刻の場合
-    const singleMatch = time.match(singleTimePattern);
-    if (singleMatch) {
-      const [, hour, minute] = singleMatch;
-      return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-    }
-    
-    // 時間範囲の場合
-    const rangeMatch = time.match(rangeTimePattern);
-    if (rangeMatch) {
-      const [, startHour, startMinute, endHour, endMinute] = rangeMatch;
-      const separator = time.includes('-') ? '-' : '~';
-      return `${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}${separator}${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}`;
-    }
-    
-    // どちらの形式にも一致しない場合
-    return null;
-  }
-
-  // 日付と時刻からTimestamp文字列を生成する関数
-  const createTimestamp = (date: string, time: string): string | null => {
-    const formattedTime = time_format(time);
-    if (!formattedTime) return null;
-    
-    // 時間範囲の場合は開始時刻のみを使用
-    const singleTime = formattedTime.includes('-') || formattedTime.includes('~') 
-      ? formattedTime.split(/[-~]/)[0] 
-      : formattedTime;
-    
-    // PostgreSQL TIMESTAMP形式で生成 (YYYY-MM-DD HH:MM:SS)
-    return `${date} ${singleTime}:00`;
+  // 時刻候補の自動提案機能
+  const getTimeSuggestions = (currentTimes: string[]): string[] => {
+    if (currentTimes.length === 0) return [];
+    return suggestTimeSlots(currentTimes, '');
   };
-
-  const checkTimeFormat = (time_arry: string[]): boolean => {
-    for (let i = 0; i < time_arry.length; i++) {
-      const time = time_arry[i];
-      if (time.trim() === '') continue; // 空文字列はスキップ
-      if (time_format(time) !== null) continue;
-      return false;
-    }
-    return true;
-  }
 
   const handleCreate = async () => {
     setLoading(true);
     
-    // 入力値のバリデーション
-    if (!title.trim()) {
-      alert('イベント名を入力してください。');
-      setLoading(false);
-      return;
-    }
-
-    const is_time_format_ok = checkTimeFormat(rows);
-    
-    
-    const newEvent = {
-      title,
-      description,
-      start_timestamp: is_time_format_ok ? createTimestamp(startDate,startTime):null, // nullの場合もあり得る
-      end_timestamp: is_time_format_ok ? createTimestamp(endDate,endTime):null, // nullの場合もあり得る
-    };
-
     try {
-      const result = await createEvent(newEvent);
-
-      if (result.success && result.data) {
-        // Supabaseから返されたデータからIDを取得
-        const createdEventId = result.data[0]?.id;
-        if (createdEventId) {
-          router.push(`/${createdEventId}`);
-        } else {
-          alert('イベントの作成に成功しましたが、IDの取得に失敗しました。');
-        }
-      } else {
-        alert(`保存に失敗しました: ${result.error}`);
+      // 基本情報の検証
+      if (!title.trim()) {
+        alert('タイトルを入力してください');
+        setLoading(false);
+        return;
       }
+
+      // 入力データを整理（空文字列を除去）
+      const filteredDates = cols.filter(date => date.trim() !== '');
+      const filteredTimes = rows.filter(time => time.trim() !== '');
+
+      if (filteredDates.length === 0 || filteredTimes.length === 0) {
+        alert('候補日と候補時刻を少なくとも1つずつ入力してください');
+        setLoading(false);
+        return;
+      }
+
+      // 表形式データを生成
+      const tableInput: UITableInput = {
+        dates: filteredDates,
+        times: filteredTimes
+      };
+
+      // 正規化されたイベントデータを生成
+      const normalizedData = generateNormalizedEventData(tableInput);
+      
+      // 簡単なバリデーション（空文字列チェック）
+      const hasEmptyDates = normalizedData.dates.some(d => !d.date_label.trim());
+      const hasEmptyTimes = normalizedData.times.some(t => !t.time_label.trim());
+      
+      if (hasEmptyDates || hasEmptyTimes) {
+        alert('空のラベルがあります。入力を確認してください。');
+        setLoading(false);
+        return;
+      }
+      
+      // イベント作成処理
+      const eventCreateData = {
+        title: title.trim(),
+        description: description.trim(),
+        eventData: normalizedData
+      };
+
+      console.log('Creating event with data:', eventCreateData);
+      
+      // 実際のAPI呼び出し（actions.tsのcreateEventを想定）
+      const result = await createEvent(eventCreateData);
+      
+      if (result.success) {
+        router.push(`/${result.eventId}`);
+      } else {
+        throw new Error(result.error || 'イベントの作成に失敗しました');
+      }
+      
     } catch (error) {
-      console.error('An error occurred:', error);
-      alert('エラーが発生しました。');
+      console.error('Event creation error:', error);
+      alert(`エラーが発生しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
     } finally {
       setLoading(false);
     }
@@ -283,23 +272,24 @@ export default function CreateSchedule() {
           </div>
         </div>
         <div className="flex space-x-4 mb-6">
+          
           <div className="mt-4 text-sm text-gray-500 flex-1">
             <table className="w-full">
               <thead>
                 <tr>
-                  <th className="border px-2 py-1">縦</th>
+                  <th className="border px-2 py-1">横軸（日付）</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, i) => (
+                {cols.map((col, i) => (
                   <tr key={i}>
                     <td className="border px-2 py-1 flex items-center">
                       <input
                         className="w-full border rounded px-2 py-1 mr-2"
                         type="text"
-                        value={row}
-                        onChange={(e) => handleRowChange(i, e.target.value)}
-                        placeholder={i === rows.length -1 ? "追加..." : ""}
+                        value={col}
+                        onChange={(e) => handleDateChange(i, e.target.value)}
+                         placeholder={i === cols.length -1 ? "追加..." : ""}
                       />
                     </td>
                   </tr>
@@ -311,19 +301,19 @@ export default function CreateSchedule() {
             <table className="w-full">
               <thead>
                 <tr>
-                  <th className="border px-2 py-1">横</th>
+                  <th className="border px-2 py-1">縦軸（時間）</th>
                 </tr>
               </thead>
               <tbody>
-                {cols.map((col, i) => (
+                {rows.map((row, i) => (
                   <tr key={i}>
                     <td className="border px-2 py-1 flex items-center">
                       <input
                         className="w-full border rounded px-2 py-1 mr-2"
                         type="text"
-                        value={col}
-                        onChange={(e) => handleColChange(i, e.target.value)}
-                         placeholder={i === cols.length -1 ? "追加..." : ""}
+                        value={row}
+                        onChange={(e) => handleTimeChange(i, e.target.value)}
+                        placeholder={i === rows.length -1 ? "追加..." : ""}
                       />
                     </td>
                   </tr>
@@ -338,16 +328,16 @@ export default function CreateSchedule() {
                 <thead>
                   <tr>
                     <th className="border px-2 py-1"></th>
-                    {rows.slice(0, -1).map((row, i) => (
-                      <th key={i} className="border px-2 py-1">{row}</th>
+                    {cols.slice(0, -1).map((col, i) => (
+                      <th key={i} className="border px-2 py-1">{col}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {cols.slice(0, -1).map((col, i) => (
+                  {rows.slice(0, -1).map((row, i) => (
                     <tr key={i}>
-                      <th className="border px-2 py-1">{col}</th>
-                      {rows.slice(0, -1).map((row, j) => (
+                      <th className="border px-2 py-1">{row}</th>
+                      {cols.slice(0, -1).map((col, j) => (
                         <td key={`${i}-${j}`} className="border px-2 py-1"></td>
                       ))}
                     </tr>
