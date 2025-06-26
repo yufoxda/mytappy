@@ -239,3 +239,61 @@ export async function getCompleteEventById(id: string) {
     return { success: false, error: 'Internal server error' };
   }
 }
+
+// 特定イベントの投票状況テーブル取得（表形式表示用）
+export async function getEventTableGrid(eventId: string) {
+  try {
+    const { data: tableGrid, error } = await supabase
+      .from('event_table_grid')
+      .select('*')
+      .eq('event_id', eventId)
+      .order('row_order')
+      .order('column_order');
+
+    if (error) {
+      console.error('Error fetching event table grid:', error);
+      return { success: false, error: 'Failed to fetch event table grid' };
+    }
+
+    return { success: true, data: tableGrid || [] };
+  } catch (error) {
+    console.error('Error:', error);
+    return { success: false, error: 'Internal server error' };
+  }
+}
+
+// 特定イベントの参加者一覧取得
+export async function getEventParticipants(eventId: string) {
+  try {
+    const { data: participants, error } = await supabase
+      .from('votes')
+      .select(`
+        user_id,
+        users (
+          id,
+          name,
+          email
+        )
+      `)
+      .eq('event_id', eventId);
+
+    if (error) {
+      console.error('Error fetching participants:', error);
+      return { success: false, error: 'Failed to fetch participants' };
+    }
+
+    // 重複を除去
+    const uniqueParticipants = participants?.reduce((acc: any[], current: any) => {
+      const exists = acc.find(p => p.users.id === current.users.id);
+      if (!exists) {
+        acc.push(current);
+      }
+      return acc;
+    }, []) || [];
+
+    return { success: true, data: uniqueParticipants };
+  } catch (error) {
+    console.error('Error:', error);
+    return { success: false, error: 'Internal server error' };
+  }
+}
