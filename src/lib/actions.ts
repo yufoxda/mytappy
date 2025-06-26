@@ -385,7 +385,7 @@ export async function addVotes(eventId: string, userId: string, votes: { eventDa
   }
 }
 
-// ユーザーの対応可能時間パターンを学習・登録（高度な重複検出・統合処理）
+// ユーザーの対応可能時間パターンを学習・登録（連続時間帯結合・高度な重複検出・統合処理）
 async function learnUserAvailabilityPatterns(userId: string, eventId: string, votes: { eventDateId: string; eventTimeId: string; isAvailable: boolean }[]) {
   try {
     // 対応可能な時間のみフィルタリング
@@ -400,8 +400,8 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
     const existingPatterns = existingPatternsResult.success && existingPatternsResult.data ? 
       existingPatternsResult.data : [];
 
-    // 2. 新規投票データから時間パターンを抽出
-    const newPatterns: { start_time: string; end_time: string }[] = [];
+    // 2. 新規投票データから時間パターンを抽出し、連続する時間帯を結合
+    const individualPatterns: { start_time: string; end_time: string; date: string }[] = [];
 
     for (const vote of availableVotes) {
       const { data: dateData, error: dateError } = await supabase
@@ -424,57 +424,171 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
       const parsedDate = parseDateLabel(dateData.date_label);
       const parsedTime = parseTimeLabel(timeData.time_label);
 
-      if (!parsedDate.isDateRecognized || !parsedTime.isTimeRecognized) {
-        continue; // 解析できない場合はスキップ
-      }
+      console.log(`Processing vote: date_label="${dateData.date_label}", time_label="${timeData.time_label}"`);
+      console.log(`Parsed date:`, parsedDate);
+      console.log(`Parsed time:`, parsedTime);
 
-      // TIMESTAMPを構築
-      if (parsedDate.date && parsedTime.startTime) {
+      // 日付ラベルから実際の日付を取得し、時刻ラベルから時刻を抽出
+      if (parsedDate.isDateRecognized && parsedTime.isTimeRecognized && parsedDate.date && parsedTime.startTime) {
+        // タイムゾーンを無視した文字列ベースの時刻計算
         const [startHour, startMinute] = parsedTime.startTime.split(':').map(Number);
-        const startTimestamp = new Date(parsedDate.date);
-        startTimestamp.setHours(startHour, startMinute, 0, 0);
+        
+        console.log(`Extracted time parts: hour=${startHour}, minute=${startMinute}`);
+        
+        // Dateオブジェクトからタイムゾーンの影響を受けない純粋な日付文字列を取得
+        const year = parsedDate.date.getFullYear();
+        const month = String(parsedDate.date.getMonth() + 1).padStart(2, '0');
+        const day = String(parsedDate.date.getDate()).padStart(2, '0');
+        const dateString = `${year}-${month}-${day}`;
+        
+        console.log(`Base date string: ${dateString}`);
+        
+        // 開始時刻を文字列で構築（タイムゾーン変換なし）
+        const startTimeString = `${String(startHour).padStart(2, '0')}:${String(startMinute).padStart(2, '0')}:00`;
+        const startTimestamp = `${dateString} ${startTimeString}`;
+        
+        console.log(`Start timestamp (timezone-free): ${startTimestamp}`);
 
-        let endTimestamp = new Date(startTimestamp);
+        // 終了時刻を計算
+        let endHour = startHour;
+        let endMinute = startMinute;
         if (parsedTime.endTime) {
-          const [endHour, endMinute] = parsedTime.endTime.split(':').map(Number);
-          endTimestamp.setHours(endHour, endMinute, 0, 0);
+          [endHour, endMinute] = parsedTime.endTime.split(':').map(Number);
         } else {
-          endTimestamp.setHours(startTimestamp.getHours() + 1);
+          // 終了時刻が指定されていない場合は1時間後
+          endHour = startHour + 1;
+          if (endHour >= 24) {
+            endHour = 23;
+            endMinute = 59;
+          }
         }
 
-        newPatterns.push({
-          start_time: startTimestamp.toISOString(),
-          end_time: endTimestamp.toISOString()
+        const endTimeString = `${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}:00`;
+        const endTimestamp = `${dateString} ${endTimeString}`;
+
+        console.log(`Individual pattern (timezone-free): ${startTimestamp} - ${endTimestamp}`);
+
+        individualPatterns.push({
+          start_time: startTimestamp,
+          end_time: endTimestamp,
+          date: dateString
         });
+      } else {
+        console.log(`Skipping vote - Date recognized: ${parsedDate.isDateRecognized}, Time recognized: ${parsedTime.isTimeRecognized}`);
       }
     }
 
-    if (newPatterns.length === 0) {
+    // 文字列時刻を分に変換するヘルパー関数
+    const timeStringToMinutes = (timeString: string): number => {
+      const timePart = timeString.split(' ')[1]; // "YYYY-MM-DD HH:mm:ss" から "HH:mm:ss" を取得
+      const [hours, minutes] = timePart.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+
+    // 分を文字列時刻に変換するヘルパー関数
+    const minutesToTimeString = (minutes: number, dateString: string): string => {
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return `${dateString} ${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:00`;
+    };
+
+    if (individualPatterns.length === 0) {
       return; // 抽出できたパターンがない場合は終了
     }
 
-    // 3. 重複検出と統合処理
+    // 3. 同じ日付の時間帯を時系列でソートして連続する時間帯を結合
+    const newPatterns: { start_time: string; end_time: string }[] = [];
+    
+    // 日付別にグループ化
+    const patternsByDate = individualPatterns.reduce((acc, pattern) => {
+      if (!acc[pattern.date]) {
+        acc[pattern.date] = [];
+      }
+      acc[pattern.date].push(pattern);
+      return acc;
+    }, {} as Record<string, typeof individualPatterns>);
+
+    // 各日付について連続する時間帯を結合
+    for (const [date, patterns] of Object.entries(patternsByDate)) {
+      // 開始時刻でソート（文字列比較で十分）
+      patterns.sort((a, b) => a.start_time.localeCompare(b.start_time));
+      
+      console.log(`Processing date ${date} with ${patterns.length} patterns:`, patterns.map(p => `${p.start_time} - ${p.end_time}`));
+
+      let mergedStartTime = patterns[0].start_time;
+      let mergedEndTime = patterns[0].end_time;
+
+      for (let i = 1; i < patterns.length; i++) {
+        const currentStartTime = patterns[i].start_time;
+        const currentEndTime = patterns[i].end_time;
+
+        // 時刻を分に変換して比較
+        const mergedEndMinutes = timeStringToMinutes(mergedEndTime);
+        const currentStartMinutes = timeStringToMinutes(currentStartTime);
+
+        // 前の時間帯の終了時刻と現在の時間帯の開始時刻が連続しているかチェック
+        if (currentStartMinutes <= mergedEndMinutes) {
+          // 連続している場合は終了時刻を延長
+          const currentEndMinutes = timeStringToMinutes(currentEndTime);
+          const newEndMinutes = Math.max(mergedEndMinutes, currentEndMinutes);
+          mergedEndTime = minutesToTimeString(newEndMinutes, date);
+          console.log(`Merged continuous pattern: ${mergedStartTime} - ${mergedEndTime}`);
+        } else {
+          // 連続していない場合は現在の結合パターンを保存して新しい結合パターンを開始
+          newPatterns.push({
+            start_time: mergedStartTime,
+            end_time: mergedEndTime
+          });
+          console.log(`Saved merged pattern: ${mergedStartTime} - ${mergedEndTime}`);
+          
+          mergedStartTime = currentStartTime;
+          mergedEndTime = currentEndTime;
+        }
+      }
+
+      // 最後の結合パターンを保存
+      newPatterns.push({
+        start_time: mergedStartTime,
+        end_time: mergedEndTime
+      });
+      console.log(`Final merged pattern for ${date}: ${mergedStartTime} - ${mergedEndTime}`);
+    }
+
+    console.log(`Created ${newPatterns.length} merged patterns from ${individualPatterns.length} individual patterns`);
+
+    if (newPatterns.length === 0) {
+      return; // 結合できたパターンがない場合は終了
+    }
+
+    // 4. 既存パターンとの重複検出と統合処理
     const duplicateIds: string[] = [];
     const mergedPatterns: { start_time: string; end_time: string }[] = [];
 
     for (const newPattern of newPatterns) {
-      const newStart = new Date(newPattern.start_time);
-      const newEnd = new Date(newPattern.end_time);
+      const newStartMinutes = timeStringToMinutes(newPattern.start_time);
+      const newEndMinutes = timeStringToMinutes(newPattern.end_time);
+      const newDateString = newPattern.start_time.split(' ')[0];
       
       let foundOverlap = false;
       
       // 既存パターンとの重複チェック
       for (const existing of existingPatterns) {
-        const existingStart = new Date(existing.start_time);
-        const existingEnd = new Date(existing.end_time);
+        const existingStartMinutes = timeStringToMinutes(existing.start_time);
+        const existingEndMinutes = timeStringToMinutes(existing.end_time);
+        const existingDateString = existing.start_time.split(' ')[0];
+        
+        // 同じ日付かチェック
+        if (newDateString !== existingDateString) {
+          continue;
+        }
         
         // 時間重複判定（重複または隣接している場合）
         const isOverlapping = (
-          newStart <= existingEnd && newEnd >= existingStart
+          newStartMinutes <= existingEndMinutes && newEndMinutes >= existingStartMinutes
         ) || (
-          // 隣接している場合も統合対象とする（1時間以内の差）
-          Math.abs(newEnd.getTime() - existingStart.getTime()) <= 60 * 60 * 1000 ||
-          Math.abs(existingEnd.getTime() - newStart.getTime()) <= 60 * 60 * 1000
+          // 隣接している場合も統合対象とする（60分以内の差）
+          Math.abs(newEndMinutes - existingStartMinutes) <= 60 ||
+          Math.abs(existingEndMinutes - newStartMinutes) <= 60
         );
         
         if (isOverlapping) {
@@ -482,12 +596,12 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
           duplicateIds.push(existing.id);
           
           // 統合された時間範囲を計算
-          const mergedStart = new Date(Math.min(newStart.getTime(), existingStart.getTime()));
-          const mergedEnd = new Date(Math.max(newEnd.getTime(), existingEnd.getTime()));
+          const mergedStartMinutes = Math.min(newStartMinutes, existingStartMinutes);
+          const mergedEndMinutes = Math.max(newEndMinutes, existingEndMinutes);
           
           mergedPatterns.push({
-            start_time: mergedStart.toISOString(),
-            end_time: mergedEnd.toISOString()
+            start_time: minutesToTimeString(mergedStartMinutes, newDateString),
+            end_time: minutesToTimeString(mergedEndMinutes, newDateString)
           });
           break; // 1つでも重複が見つかったら統合処理
         }
@@ -499,7 +613,7 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
       }
     }
 
-    // 4. 重複するパターンを削除
+    // 5. 重複するパターンを削除
     if (duplicateIds.length > 0) {
       const { error: deleteError } = await supabase
         .from('user_availability_patterns')
@@ -511,7 +625,7 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
       }
     }
 
-    // 5. 統合されたパターンを登録
+    // 6. 統合されたパターンを登録
     if (mergedPatterns.length > 0) {
       const patternsToInsert = mergedPatterns.map(pattern => ({
         user_id: userId,
