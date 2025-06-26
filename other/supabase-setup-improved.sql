@@ -39,25 +39,31 @@ CREATE TABLE event_times (
   UNIQUE(event_id, row_order)
 );
 
--- 候補日時スロット（日付×時刻の組み合わせ）
-CREATE TABLE time_slots (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  event_date_id UUID NOT NULL REFERENCES event_dates(id) ON DELETE CASCADE,
-  event_time_id UUID NOT NULL REFERENCES event_times(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(event_id, event_date_id, event_time_id) -- 同じ組み合わせの重複防止
-);
+-- 候補日時スロット（日付×時刻の組み合わせ）- ビューとして実装
+CREATE VIEW time_slots AS
+SELECT 
+  ed.event_id,
+  ed.id as event_date_id,
+  et.id as event_time_id,
+  ed.date_label,
+  ed.column_order,
+  et.time_label,
+  et.row_order,
+  CONCAT(ed.id, '-', et.id) as slot_key -- 一意識別子
+FROM event_dates ed
+CROSS JOIN event_times et
+WHERE ed.event_id = et.event_id;
 
 -- 投票（ユーザーの可用性）
 CREATE TABLE votes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  time_slot_id UUID NOT NULL REFERENCES time_slots(id) ON DELETE CASCADE,
-  event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE, -- 冗長だがクエリ高速化のため
-  is_available BOOLEAN NOT NULL, -- より明確な名前
+  event_id UUID NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  event_date_id UUID NOT NULL REFERENCES event_dates(id) ON DELETE CASCADE,
+  event_time_id UUID NOT NULL REFERENCES event_times(id) ON DELETE CASCADE,
+  is_available BOOLEAN NOT NULL,
   voted_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, time_slot_id) -- 同じスロットに重複投票を防ぐ
+  UNIQUE(user_id, event_date_id, event_time_id) -- 同じスロットに重複投票を防ぐ
 );
 
 -- ユーザーの過去の投票パターン（自動入力のため）
@@ -75,11 +81,9 @@ CREATE INDEX idx_event_dates_event_id ON event_dates(event_id);
 CREATE INDEX idx_event_dates_order ON event_dates(event_id, column_order);
 CREATE INDEX idx_event_times_event_id ON event_times(event_id);
 CREATE INDEX idx_event_times_order ON event_times(event_id, row_order);
-CREATE INDEX idx_time_slots_event_id ON time_slots(event_id);
-CREATE INDEX idx_time_slots_date_time ON time_slots(event_date_id, event_time_id);
 CREATE INDEX idx_votes_event_id ON votes(event_id);
 CREATE INDEX idx_votes_user_id ON votes(user_id);
-CREATE INDEX idx_votes_time_slot_id ON votes(time_slot_id);
+CREATE INDEX idx_votes_date_time ON votes(event_date_id, event_time_id);
 CREATE INDEX idx_votes_event_user ON votes(event_id, user_id); -- 集計クエリ用
 CREATE INDEX idx_user_patterns_user ON user_availability_patterns(user_id);
 
@@ -87,7 +91,8 @@ CREATE INDEX idx_user_patterns_user ON user_availability_patterns(user_id);
 CREATE MATERIALIZED VIEW event_vote_statistics AS
 SELECT 
   v.event_id,
-  v.time_slot_id,
+  v.event_date_id,
+  v.event_time_id,
   ed.date_label,
   ed.column_order,
   et.time_label,
@@ -100,12 +105,11 @@ SELECT
     2
   ) as availability_percentage
 FROM votes v
-JOIN time_slots ts ON v.time_slot_id = ts.id
-JOIN event_dates ed ON ts.event_date_id = ed.id
-JOIN event_times et ON ts.event_time_id = et.id
-GROUP BY v.event_id, v.time_slot_id, ed.date_label, ed.column_order, et.time_label, et.row_order;
+JOIN event_dates ed ON v.event_date_id = ed.id
+JOIN event_times et ON v.event_time_id = et.id
+GROUP BY v.event_id, v.event_date_id, v.event_time_id, ed.date_label, ed.column_order, et.time_label, et.row_order;
 
-CREATE UNIQUE INDEX idx_vote_statistics_event_slot ON event_vote_statistics(event_id, time_slot_id);
+CREATE UNIQUE INDEX idx_vote_statistics_event_date_time ON event_vote_statistics(event_id, event_date_id, event_time_id);
 
 -- 表形式表示用のビュー（UIでの表描画用）
 CREATE VIEW event_table_grid AS
@@ -115,7 +119,9 @@ SELECT
   ed.column_order,
   et.time_label,
   et.row_order,
-  ts.id as time_slot_id,
+  ed.id as event_date_id,
+  et.id as event_time_id,
+  ts.slot_key, -- 一意識別子
   -- 投票統計も含める（リアルタイム表示用）
   COALESCE(evs.total_votes, 0) as total_votes,
   COALESCE(evs.available_votes, 0) as available_votes,
@@ -127,7 +133,8 @@ LEFT JOIN time_slots ts ON
   ts.event_id = ed.event_id 
   AND ts.event_date_id = ed.id 
   AND ts.event_time_id = et.id
-LEFT JOIN event_vote_statistics evs ON ts.id = evs.time_slot_id
+LEFT JOIN event_vote_statistics evs ON 
+  evs.event_date_id = ed.id AND evs.event_time_id = et.id
 WHERE ed.event_id = et.event_id
 ORDER BY ed.column_order, et.row_order;
 
@@ -137,7 +144,12 @@ RETURNS TRIGGER AS $$
 BEGIN
   -- CONCURRENTLYオプションを削除（Supabase対応）
   REFRESH MATERIALIZED VIEW event_vote_statistics;
-  RETURN NULL;
+  -- INSERT/UPDATE の場合はNEWを、DELETEの場合はOLDを返す
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  ELSE
+    RETURN NEW;
+  END IF;
 END;
 $$ LANGUAGE plpgsql;
 
