@@ -135,7 +135,8 @@ ORDER BY ed.column_order, et.row_order;
 CREATE OR REPLACE FUNCTION refresh_vote_statistics()
 RETURNS TRIGGER AS $$
 BEGIN
-  REFRESH MATERIALIZED VIEW CONCURRENTLY event_vote_statistics;
+  -- CONCURRENTLYオプションを削除（Supabase対応）
+  REFRESH MATERIALIZED VIEW event_vote_statistics;
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
