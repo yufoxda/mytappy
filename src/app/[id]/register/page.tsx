@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getCompleteEventById, createOrGetUser, addVotes } from '@/lib/actions';
+import { getCompleteEventById, createOrGetUser, addVotes, suggestVotesBasedOnPatterns } from '@/lib/actions';
 
 export default function RegisterPage() {
   const { id } = useParams();
@@ -10,6 +10,8 @@ export default function RegisterPage() {
   const [name, setName] = useState('');
   const [selections, setSelections] = useState<{ [key: string]: boolean }>({});
   const [loading, setLoading] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [hasSuggestions, setHasSuggestions] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -30,6 +32,46 @@ export default function RegisterPage() {
 
     fetchEvent();
   }, [id]);
+
+  // 名前変更時にユーザーの過去パターンから自動提案を取得
+  const handleNameChange = async (newName: string) => {
+    setName(newName);
+    
+    if (newName.trim().length === 0) {
+      setCurrentUserId(null);
+      setHasSuggestions(false);
+      return;
+    }
+
+    try {
+      // ユーザーを作成または取得
+      const userResult = await createOrGetUser(newName.trim());
+      
+      if (userResult.success && userResult.data) {
+        setCurrentUserId(userResult.data.id);
+        
+        // 過去のパターンに基づく自動提案を取得
+        const suggestionResult = await suggestVotesBasedOnPatterns(userResult.data.id, id as string);
+        
+        if (suggestionResult.success && suggestionResult.data && suggestionResult.data.length > 0) {
+          // 提案データを selections に適用
+          const newSelections: { [key: string]: boolean } = {};
+          suggestionResult.data.forEach(suggestion => {
+            const key = `${suggestion.eventDateId}-${suggestion.eventTimeId}`;
+            newSelections[key] = suggestion.isAvailable;
+          });
+          
+          setSelections(newSelections);
+          setHasSuggestions(true);
+        } else {
+          setHasSuggestions(false);
+        }
+      }
+    } catch (error) {
+      console.error('Error getting user suggestions:', error);
+      setHasSuggestions(false);
+    }
+  };
 
   // テーブル形式のデータを構築する関数
   const buildTableData = () => {
@@ -60,15 +102,19 @@ export default function RegisterPage() {
     setLoading(true);
     
     try {
-      // ユーザーを作成または取得
-      const userResult = await createOrGetUser(name.trim());
+      // ユーザーIDが既に取得済みの場合はそれを使用、そうでなければ新規取得
+      let userId = currentUserId;
       
-      if (!userResult.success) {
-        alert(`ユーザー登録に失敗しました: ${userResult.error}`);
-        return;
+      if (!userId) {
+        const userResult = await createOrGetUser(name.trim());
+        
+        if (!userResult.success) {
+          alert(`ユーザー登録に失敗しました: ${userResult.error}`);
+          return;
+        }
+        
+        userId = userResult.data.id;
       }
-
-      const userId = userResult.data.id;
 
       // 投票データを準備
       const votes: { eventDateId: string; eventTimeId: string; isAvailable: boolean }[] = [];
@@ -84,8 +130,8 @@ export default function RegisterPage() {
         });
       });
 
-      // 投票を登録
-      const result = await addVotes(id as string, userId, votes);
+      // 投票を登録（パターン学習も自動実行される）
+      const result = await addVotes(id as string, userId!, votes);
 
       if (result.success) {
         router.push(`/${id}`);
@@ -114,9 +160,14 @@ export default function RegisterPage() {
         <input 
           className="border rounded px-3 py-2 w-full max-w-xs"
           value={name}
-          onChange={e => setName(e.target.value)}
+          onChange={e => handleNameChange(e.target.value)}
           placeholder="名前を入力"
         />
+        {hasSuggestions && (
+          <p className="mt-2 text-sm text-green-600">
+            ✨ 過去の投票パターンから自動で選択肢を設定しました。必要に応じて調整してください。
+          </p>
+        )}
       </div>
 
       {dates.length > 0 && times.length > 0 ? (
