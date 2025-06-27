@@ -332,6 +332,86 @@ export async function createOrGetUser(name: string) {
   }
 }
 
+// Keycloak認証対応のユーザー作成または取得
+export async function createOrGetKeycloakUser(keycloakId: string, email: string, name: string) {
+  try {
+    // まずKeycloak IDでユーザーが存在するかチェック
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('keycloak_id', keycloakId)
+      .single();
+
+    if (existingUser) {
+      // 既存ユーザーの情報を更新
+      const { data: updatedUser, error: updateError } = await supabase
+        .from('users')
+        .update({
+          email,
+          name,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', existingUser.id)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error('Error updating Keycloak user:', updateError);
+        return { success: false, error: 'Failed to update user' };
+      }
+
+      return { success: true, data: updatedUser };
+    }
+
+    // 存在しない場合は新規作成
+    const { data: newUser, error: createError } = await supabase
+      .from('users')
+      .insert([{ 
+        keycloak_id: keycloakId,
+        email,
+        name,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (createError) {
+      console.error('Error creating Keycloak user:', createError);
+      return { success: false, error: 'Failed to create user' };
+    }
+
+    return { success: true, data: newUser };
+  } catch (error) {
+    console.error('Error:', error);
+    return { success: false, error: 'Internal server error' };
+  }
+}
+
+// Keycloak IDでユーザーを取得
+export async function getUserByKeycloakId(keycloakId: string) {
+  try {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('keycloak_id', keycloakId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') { // No rows found
+        return { success: false, error: 'User not found' };
+      }
+      console.error('Error fetching user by Keycloak ID:', error);
+      return { success: false, error: 'Failed to fetch user' };
+    }
+
+    return { success: true, data: user };
+  } catch (error) {
+    console.error('Error:', error);
+    return { success: false, error: 'Internal server error' };
+  }
+}
+
 // 投票を追加
 export async function addVotes(eventId: string, userId: string, votes: { eventDateId: string; eventTimeId: string; isAvailable: boolean }[]) {
   try {
@@ -566,7 +646,7 @@ async function learnUserAvailabilityPatterns(userId: string, eventId: string, vo
         const mergedEndMinutes = timeStringToMinutes(mergedEndTime);
         const currentStartMinutes = timeStringToMinutes(currentStartTime);
 
-        // 前の時間帯の終了時刻と現在の時間帯の開始時刻が連続しているかチェック
+        // 前の時間帯の終了時刻と現在の開始時刻が連続しているかチェック
         if (currentStartMinutes <= mergedEndMinutes) {
           // 連続している場合は終了時刻を延長
           const currentEndMinutes = timeStringToMinutes(currentEndTime);

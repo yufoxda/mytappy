@@ -1,30 +1,74 @@
 'use client';
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/AuthContext";
+import Navigation from "@/components/Navigation";
 
 export default function Home() {
+  const { session, user, loading } = useAuth();
 
   return (
-    <div className="max-w-3xl mx-auto py-8 px-4">
-      <h1 className="text-2xl font-bold text-blue-700 mb-6 border-b pb-2">たぴぷら</h1>
-      <h2 className="text-xl font-semibold mb-4">tappy++</h2>
-      <p className="mb-4">このアプリは、日程調整を簡単に行うためのツールです。</p>
-        <button
-          className="mx-auto bg-blue-600 text-white px-4 py-2 my-80 rounded hover:bg-blue-700"
-          onClick={() => window.location.href = '/create'}        
-        >
-          新規予定作成
-        </button>
-      <h1 className="text-2xl font-bold mb-4">使い方</h1>
-      <ul className="list-disc pl-6 space-y-2">
-        <li>新規予定を作成するには、上の「新規予定作成」ボタンをクリックします。</li>
-        <li>予定を作成すると、参加者が日程を選択できるようになります。</li>
-        <li>参加者は、予定の詳細ページから自分の名前と選択した日程を登録できます。</li>
-        <li>登録後、予定の確認ページで参加者の一覧と日程ごとの参加人数を確認できます。</li>
-        <li>このアプリは、Next.jsとTypeScriptを使用して開発されています。</li>
-        <li>ソースコードはGitHubで公開されています。</li>
-        <li>フィードバックやバグ報告は、GitHubのIssuesで受け付けています。</li>
-      </ul>
+    <div className="min-h-screen bg-gray-50">
+      <Navigation />
+      
+      <div className="max-w-3xl mx-auto py-8 px-4">
+        <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
+          <h1 className="text-3xl font-bold text-blue-700 mb-2">たぴぷら</h1>
+          <h2 className="text-xl font-semibold text-gray-600 mb-6">tappy++ - Keycloak認証対応版</h2>
+          
+          {session?.user ? (
+            <div className="bg-green-50 border border-green-200 rounded-md p-4 mb-6">
+              <p className="text-green-800">
+                <span className="font-semibold">{session.user.name}さん</span>、ようこそ！
+                認証済みユーザーとして全機能をご利用いただけます。
+              </p>
+            </div>
+          ) : (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-6">
+              <p className="text-yellow-800">
+                現在ゲストモードでご利用中です。
+                <a href="/auth/login" className="underline font-semibold ml-1">ログイン</a>
+                すると、投票履歴の保存や個人設定が利用できます。
+              </p>
+            </div>
+          )}
+          
+          <p className="text-gray-700 mb-6">
+            このアプリは、Keycloak認証を使用したセキュアな日程調整ツールです。
+          </p>
+          
+          <div className="text-center">
+            <button
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-semibold"
+              onClick={() => window.location.href = '/create'}        
+            >
+              新規予定作成
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <h1 className="text-2xl font-bold mb-4 text-gray-900">使い方</h1>
+          <ul className="list-disc pl-6 space-y-3 text-gray-700">
+            <li>新規予定を作成するには、上の「新規予定作成」ボタンをクリックします。</li>
+            <li>予定を作成すると、参加者が日程を選択できるようになります。</li>
+            <li>参加者は、予定の詳細ページから自分の名前と選択した日程を登録できます。</li>
+            <li>登録後、予定の確認ページで参加者の一覧と日程ごとの参加人数を確認できます。</li>
+            <li><strong>認証済みユーザー</strong>は、投票パターンの学習機能と自動提案機能が利用できます。</li>
+            <li>このアプリは、Next.js、TypeScript、Supabase、Keycloakを使用して開発されています。</li>
+          </ul>
+          
+          <div className="mt-6 p-4 bg-blue-50 rounded-md">
+            <h3 className="font-semibold text-blue-900 mb-2">🔐 セキュリティ機能</h3>
+            <ul className="text-sm text-blue-800 space-y-1">
+              <li>• Keycloak認証による安全なログイン</li>
+              <li>• ユーザー固有のデータ管理</li>
+              <li>• 投票履歴の自動学習</li>
+              <li>• パーソナライズされた予定提案</li>
+            </ul>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
