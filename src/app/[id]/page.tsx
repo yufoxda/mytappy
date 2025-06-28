@@ -101,8 +101,15 @@ export default function ConfirmPage() {
         <ul className="bg-gray-50 p-4 rounded-lg">
           {participants.length === 0 && <li>まだ参加者がいません</li>}
           {participants.map((participant: any, idx: number) => (
-            <li key={idx} className="py-1">
-              {participant.users?.name || `ユーザー${participant.user_id}`}
+            <li key={idx} className="py-1 flex items-center">
+              <span className="flex-1">
+                {participant.users?.name || `ユーザー${participant.user_id}`}
+              </span>
+              {participant.users?.is_authenticated && (
+                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full ml-2">
+                  ログインユーザー
+                </span>
+              )}
             </li>
           ))}
         </ul>

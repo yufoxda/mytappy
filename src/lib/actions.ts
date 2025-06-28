@@ -263,7 +263,7 @@ export async function getEventTableGrid(eventId: string) {
   }
 }
 
-// 特定イベントの参加者一覧取得
+// 特定イベントの参加者一覧取得（シンプルなユーザー管理対応）
 export async function getEventParticipants(eventId: string) {
   try {
     const { data: participants, error } = await supabase
@@ -273,7 +273,8 @@ export async function getEventParticipants(eventId: string) {
         users (
           id,
           name,
-          email
+          email,
+          auth_user_id
         )
       `)
       .eq('event_id', eventId);
@@ -283,11 +284,17 @@ export async function getEventParticipants(eventId: string) {
       return { success: false, error: 'Failed to fetch participants' };
     }
 
-    // 重複を除去
+    // 重複を除去し、認証状態を判定
     const uniqueParticipants = participants?.reduce((acc: any[], current: any) => {
       const exists = acc.find(p => p.users.id === current.users.id);
       if (!exists) {
-        acc.push(current);
+        acc.push({
+          ...current,
+          users: {
+            ...current.users,
+            is_authenticated: current.users.auth_user_id !== null
+          }
+        });
       }
       return acc;
     }, []) || [];
@@ -991,6 +998,90 @@ export async function suggestVotesBasedOnPatterns(userId: string, eventId: strin
     return { success: true, data: suggestions };
   } catch (error) {
     console.error('Error:', error);
+    return { success: false, error: 'Internal server error' };
+  }
+}
+
+// 認証ユーザーとアプリユーザーを統合する関数（重複回避・アトミック処理版）
+export async function linkAuthUserToAppUser(authUserId: string, displayName: string) {
+  try {
+    // アトミックな upsert 操作で重複を完全に防止
+    const { data: upsertedUser, error: upsertError } = await supabase
+      .from('users')
+      .upsert(
+        {
+          auth_user_id: authUserId,
+          name: displayName,
+          updated_at: new Date().toISOString()
+        },
+        {
+          onConflict: 'auth_user_id',
+          ignoreDuplicates: false // 更新を実行
+        }
+      )
+      .select()
+      .single();
+
+    if (upsertError) {
+      // upsert が失敗した場合は既存レコードを取得
+      console.warn('Upsert failed, attempting to fetch existing record:', upsertError);
+      
+      const { data: existingUser, error: fetchError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('auth_user_id', authUserId)
+        .single();
+
+      if (fetchError) {
+        console.error('Error fetching existing user:', fetchError);
+        return { success: false, error: 'Failed to create or fetch user' };
+      }
+
+      // 既存ユーザーがある場合は名前のみ更新を試行
+      if (existingUser) {
+        const { data: updatedUser, error: updateError } = await supabase
+          .from('users')
+          .update({ 
+            name: displayName,
+            updated_at: new Date().toISOString()
+          })
+          .eq('auth_user_id', authUserId)
+          .select()
+          .single();
+
+        if (updateError) {
+          console.warn('Update failed, returning existing user:', updateError);
+          return { success: true, data: existingUser };
+        }
+
+        return { success: true, data: updatedUser };
+      }
+
+      return { success: false, error: 'User not found after upsert failure' };
+    }
+
+    console.log('Successfully linked/updated auth user:', { authUserId, displayName });
+    return { success: true, data: upsertedUser };
+
+  } catch (error) {
+    console.error('Error in linkAuthUserToAppUser:', error);
+    
+    // エラーが発生した場合も既存レコードの取得を試行
+    try {
+      const { data: fallbackUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('auth_user_id', authUserId)
+        .single();
+
+      if (fallbackUser) {
+        console.log('Returning existing user after error recovery');
+        return { success: true, data: fallbackUser };
+      }
+    } catch (fallbackError) {
+      console.error('Fallback fetch also failed:', fallbackError);
+    }
+
     return { success: false, error: 'Internal server error' };
   }
 }

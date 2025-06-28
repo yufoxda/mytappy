@@ -1,25 +1,38 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseBrowserClient } from '@/lib/supabase'
+import { NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
 
-export async function GET(request: NextRequest) {
+export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  const next = searchParams.get('next') ?? '/'
+  // if "next" is in param, use it as the redirect URL
+  let next = searchParams.get('next') ?? '/'
+  if (!next.startsWith('/')) {
+    // if "next" is not a relative URL, use the default
+    next = '/'
+  }
 
   if (code) {
-    const supabase = createSupabaseBrowserClient()
-    
-    try {
-      const { error } = await supabase.auth.exchangeCodeForSession(code)
-      
-      if (!error) {
-        return NextResponse.redirect(`${origin}${next}`)
-      }
-    } catch (error) {
-      console.error('Auth callback error:', error)
+    const supabase = await createClient()
+    const { error } = await supabase.auth.exchangeCodeForSession(code)
+
+    if (error) {
+      console.error('Error exchanging code for session:', error)
+      return NextResponse.redirect(`${origin}/auth/auth-code-error`)
+    }
+
+    const forwardedHost = request.headers.get('x-forwarded-host') // original origin before load balancer
+    const isLocalEnv = process.env.NODE_ENV === 'development'
+    if (isLocalEnv) {
+      // we can be sure that there is no load balancer in between, so no need to watch for X-Forwarded-Host
+      return NextResponse.redirect(`${origin}${next}`)
+    } else if (forwardedHost) {
+      return NextResponse.redirect(`https://${forwardedHost}${next}`)
+    } else {
+      return NextResponse.redirect(`${origin}${next}`)
     }
   }
 
-  // エラーの場合はログインページにリダイレクト
-  return NextResponse.redirect(`${origin}/auth/login?error=callback_error`)
+  // return the user to an error page with instructions
+  console.error('No code provided in the callback URL.')
+  return NextResponse.redirect(`${origin}/auth/auth-code-error`)
 }

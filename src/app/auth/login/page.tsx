@@ -1,47 +1,44 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { signInWithKeycloak, getSession, type AuthSession } from '@/lib/keycloakAuth'
-import { useRouter } from 'next/navigation'
+import { createSupabaseBrowserClient } from '@/lib/supabase'
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [session, setSession] = useState<AuthSession | null>(null)
-  const router = useRouter()
 
   useEffect(() => {
-    // セッション確認
-    async function checkSession() {
-      const currentSession = await getSession()
-      setSession(currentSession)
+    // URLパラメータからエラーをチェック（クライアントサイドのみ）
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search)
+      const urlError = urlParams.get('error')
+      const errorDescription = urlParams.get('error_description')
       
-      if (currentSession.user) {
-        // 既にログイン済みの場合はホームページにリダイレクト
-        router.push('/')
+      if (urlError) {
+        if (urlError === 'server_error' && errorDescription?.includes('over_email_send_rate_limit')) {
+          setError('メール送信の制限により、10秒後に再試行してください。')
+        } else {
+          setError(`認証エラー: ${errorDescription || urlError}`)
+        }
+        // エラーパラメータをURLから削除
+        const newUrl = window.location.pathname
+        window.history.replaceState({}, document.title, newUrl)
       }
     }
-    
-    checkSession()
-  }, [router])
+  }, [])
 
-  const handleKeycloakLogin = async () => {
+  async function signInWithKeycloak() {
     setIsLoading(true)
     setError(null)
-
+    
     try {
-      // まずSSO セッションを確認
-      const { checkSSOSession } = await import('@/lib/keycloakAuth')
-      const { hasSession } = await checkSSOSession()
-      
-      if (hasSession) {
-        // SSOセッションが有効な場合は自動的にリダイレクトされる
-        return
-      }
-      
-      // SSOセッションがない場合は通常のログインフローへ
-      const { signInWithKeycloak } = await import('@/lib/keycloakAuth')
-      const { error } = await signInWithKeycloak({ forceLogin: true })
+      const supabase = createSupabaseBrowserClient()
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'keycloak',
+        options: {
+          scopes: 'openid',
+        },
+      })
       
       if (error) {
         setError('ログインに失敗しました: ' + error.message)
@@ -53,29 +50,6 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false)
     }
-  }
-
-  if (session?.user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="max-w-md w-full space-y-8">
-          <div className="text-center">
-            <h2 className="text-3xl font-extrabold text-gray-900">
-              ログイン済み
-            </h2>
-            <p className="mt-2 text-sm text-gray-600">
-              こんにちは、{session.user.name}さん
-            </p>
-            <button
-              onClick={() => router.push('/')}
-              className="mt-4 group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-            >
-              ホームページに戻る
-            </button>
-          </div>
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -99,7 +73,7 @@ export default function LoginPage() {
           
           <div>
             <button
-              onClick={handleKeycloakLogin}
+              onClick={signInWithKeycloak}
               disabled={isLoading}
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -115,28 +89,6 @@ export default function LoginPage() {
                 'Keycloakでログイン'
               )}
             </button>
-          </div>
-          
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-gray-50 text-gray-500">
-                  または
-                </span>
-              </div>
-            </div>
-            
-            <div className="mt-6">
-              <button
-                onClick={() => router.push('/')}
-                className="w-full flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                ゲストとして続行
-              </button>
-            </div>
           </div>
         </div>
       </div>

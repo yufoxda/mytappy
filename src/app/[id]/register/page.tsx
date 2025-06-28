@@ -1,17 +1,20 @@
 'use client';
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getCompleteEventById, createOrGetUser, addVotes, suggestVotesBasedOnPatterns } from '@/lib/actions';
+import { getCompleteEventById, createOrGetUser, addVotes, suggestVotesBasedOnPatterns, linkAuthUserToAppUser } from '@/lib/actions';
+import { useAuth } from '@/contexts/AuthProvider';
 
 export default function RegisterPage() {
   const { id } = useParams();
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth(); // 認証状態を取得
   const [eventData, setEventData] = useState<any>(null);
   const [name, setName] = useState('');
   const [selections, setSelections] = useState<{ [key: string]: boolean }>({});
   const [loading, setLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [hasSuggestions, setHasSuggestions] = useState(false);
+  const [isSetupComplete, setIsSetupComplete] = useState(false); // 重複セットアップ防止
 
   useEffect(() => {
     if (!id) return;
@@ -33,7 +36,54 @@ export default function RegisterPage() {
     fetchEvent();
   }, [id]);
 
-  // 名前変更時にユーザーの過去パターンから自動提案を取得
+  useEffect(() => {
+    // ユーザーがログインしている場合、名前を自動入力し、過去の投票パターンを取得
+    if (user && user.id && !authLoading && !isSetupComplete) {
+      console.log('Setting up authenticated user:', user.id);
+      
+      // Keycloakユーザーの表示名を取得（fallbackでemailを使用）
+      const displayName = user.user_metadata?.full_name || user.email || 'ログインユーザー';
+      setName(displayName);
+
+      const setupAuthenticatedUser = async () => {
+        try {
+          setIsSetupComplete(true); // 重複実行を防止
+          
+          // 認証ユーザーとアプリユーザーを紐付け
+          const linkResult = await linkAuthUserToAppUser(user.id, displayName);
+          
+          if (linkResult.success && linkResult.data) {
+            setCurrentUserId(linkResult.data.id);
+            
+            // 過去のパターンに基づく自動提案を取得
+            const suggestionResult = await suggestVotesBasedOnPatterns(linkResult.data.id, id as string);
+            
+            if (suggestionResult.success && suggestionResult.data && suggestionResult.data.length > 0) {
+              // 提案データを selections に適用
+              const newSelections: { [key: string]: boolean } = {};
+              suggestionResult.data.forEach(suggestion => {
+                const key = `${suggestion.eventDateId}-${suggestion.eventTimeId}`;
+                newSelections[key] = suggestion.isAvailable;
+              });
+              
+              setSelections(newSelections);
+              setHasSuggestions(true);
+            } else {
+              setHasSuggestions(false);
+            }
+          }
+        } catch (error) {
+          console.error('Error setting up authenticated user:', error);
+          setHasSuggestions(false);
+          setIsSetupComplete(false); // エラー時はリセット
+        }
+      };
+
+      setupAuthenticatedUser();
+    }
+  }, [user, authLoading, id, isSetupComplete]);
+
+  // 名前変更時の処理（認証ユーザーと非認証ユーザーの両方に対応）
   const handleNameChange = async (newName: string) => {
     setName(newName);
     
@@ -44,31 +94,55 @@ export default function RegisterPage() {
     }
 
     try {
-      // ユーザーを作成または取得
-      const userResult = await createOrGetUser(newName.trim());
-      
-      if (userResult.success && userResult.data) {
-        setCurrentUserId(userResult.data.id);
+      if (user && user.id) {
+        // ログインユーザーの場合：表示名を更新
+        const linkResult = await linkAuthUserToAppUser(user.id, newName.trim());
         
-        // 過去のパターンに基づく自動提案を取得
-        const suggestionResult = await suggestVotesBasedOnPatterns(userResult.data.id, id as string);
-        
-        if (suggestionResult.success && suggestionResult.data && suggestionResult.data.length > 0) {
-          // 提案データを selections に適用
-          const newSelections: { [key: string]: boolean } = {};
-          suggestionResult.data.forEach(suggestion => {
-            const key = `${suggestion.eventDateId}-${suggestion.eventTimeId}`;
-            newSelections[key] = suggestion.isAvailable;
-          });
+        if (linkResult.success && linkResult.data) {
+          setCurrentUserId(linkResult.data.id);
           
-          setSelections(newSelections);
-          setHasSuggestions(true);
-        } else {
-          setHasSuggestions(false);
+          // 過去のパターンに基づく自動提案を取得
+          const suggestionResult = await suggestVotesBasedOnPatterns(linkResult.data.id, id as string);
+          
+          if (suggestionResult.success && suggestionResult.data && suggestionResult.data.length > 0) {
+            const newSelections: { [key: string]: boolean } = {};
+            suggestionResult.data.forEach(suggestion => {
+              const key = `${suggestion.eventDateId}-${suggestion.eventTimeId}`;
+              newSelections[key] = suggestion.isAvailable;
+            });
+            
+            setSelections(newSelections);
+            setHasSuggestions(true);
+          } else {
+            setHasSuggestions(false);
+          }
+        }
+      } else {
+        // 非ログインユーザーの場合：従来の処理
+        const userResult = await createOrGetUser(newName.trim());
+        
+        if (userResult.success && userResult.data) {
+          setCurrentUserId(userResult.data.id);
+          
+          // 過去のパターンに基づく自動提案を取得
+          const suggestionResult = await suggestVotesBasedOnPatterns(userResult.data.id, id as string);
+          
+          if (suggestionResult.success && suggestionResult.data && suggestionResult.data.length > 0) {
+            const newSelections: { [key: string]: boolean } = {};
+            suggestionResult.data.forEach(suggestion => {
+              const key = `${suggestion.eventDateId}-${suggestion.eventTimeId}`;
+              newSelections[key] = suggestion.isAvailable;
+            });
+            
+            setSelections(newSelections);
+            setHasSuggestions(true);
+          } else {
+            setHasSuggestions(false);
+          }
         }
       }
     } catch (error) {
-      console.error('Error getting user suggestions:', error);
+      console.error('Error updating user name:', error);
       setHasSuggestions(false);
     }
   };
@@ -102,10 +176,20 @@ export default function RegisterPage() {
     setLoading(true);
     
     try {
-      // ユーザーIDが既に取得済みの場合はそれを使用、そうでなければ新規取得
       let userId = currentUserId;
       
-      if (!userId) {
+      if (user && user.id) {
+        // ログインユーザーの場合：必ず最新の表示名でリンクを更新
+        const linkResult = await linkAuthUserToAppUser(user.id, name.trim());
+        
+        if (!linkResult.success) {
+          alert(`ユーザー情報の更新に失敗しました: ${linkResult.error}`);
+          return;
+        }
+        
+        userId = linkResult.data.id;
+      } else if (!userId) {
+        // 非ログインユーザーで、まだユーザーIDが取得されていない場合
         const userResult = await createOrGetUser(name.trim());
         
         if (!userResult.success) {
@@ -163,9 +247,14 @@ export default function RegisterPage() {
           onChange={e => handleNameChange(e.target.value)}
           placeholder="名前を入力"
         />
+        {user && user.id && (
+          <p className="mt-2 text-sm text-blue-600">
+            🔒 ログイン中 - 表示名を変更できます（データベース上の関係は保持されます）
+          </p>
+        )}
         {hasSuggestions && (
           <p className="mt-2 text-sm text-green-600">
-            ✨ 過去の投票パターンから自動で選択肢を設定しました。必要に応じて調整してください。
+            ✨ {user && user.id ? 'ログイン' : '過去の投票'}パターンから自動で選択肢を設定しました。必要に応じて調整してください。
           </p>
         )}
       </div>

@@ -1,11 +1,36 @@
 'use client';
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/AuthContext";
+import { useAuth } from "@/contexts/AuthProvider";
 import Navigation from "@/components/Navigation";
 
 export default function Home() {
-  const { session, user, loading } = useAuth();
+  const { user, loading } = useAuth();
+
+  // デバッグ用：ユーザー情報をコンソールに出力
+  useEffect(() => {
+    if (user) {
+      console.log('Current user:', user);
+      console.log('User metadata:', user.user_metadata);
+    }
+  }, [user]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <Navigation />
+        <div className="max-w-3xl mx-auto py-8 px-4">
+          <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
+            <div className="animate-pulse">
+              <div className="h-8 bg-gray-200 rounded mb-4"></div>
+              <div className="h-6 bg-gray-200 rounded mb-6"></div>
+              <div className="h-16 bg-gray-100 rounded mb-6"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -16,12 +41,24 @@ export default function Home() {
           <h1 className="text-3xl font-bold text-blue-700 mb-2">たぴぷら</h1>
           <h2 className="text-xl font-semibold text-gray-600 mb-6">tappy++ - Keycloak認証対応版</h2>
           
-          {session?.user ? (
+          {user ? (
             <div className="bg-green-50 border border-green-200 rounded-md p-4 mb-6">
-              <p className="text-green-800">
-                <span className="font-semibold">{session.user.name}さん</span>、ようこそ！
-                認証済みユーザーとして全機能をご利用いただけます。
-              </p>
+              <div className="flex items-center space-x-3">
+                <div className="h-10 w-10 bg-green-100 rounded-full flex items-center justify-center">
+                  <span className="text-green-700 font-semibold">
+                    {(user.user_metadata?.name || user.email || 'U').charAt(0).toUpperCase()}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-green-800 font-semibold">
+                    {user.user_metadata?.name || user.user_metadata?.full_name || 'ユーザー'}さん、ようこそ！
+                  </p>
+                  <p className="text-green-600 text-sm">{user.email}</p>
+                  <p className="text-green-600 text-xs">
+                    認証済みユーザーとして全機能をご利用いただけます。
+                  </p>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-6">

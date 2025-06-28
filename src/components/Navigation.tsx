@@ -1,12 +1,18 @@
 'use client'
 
-import { useAuth } from '@/lib/AuthContext'
-import { signOut } from '@/lib/keycloakAuth'
-import { useState } from 'react'
+import { useAuth } from '@/contexts/AuthProvider'
+import { useState, useEffect } from 'react'
 
 export default function Navigation() {
-  const { session, user, loading } = useAuth()
+  const { user, loading, signOut } = useAuth()
   const [isSigningOut, setIsSigningOut] = useState(false)
+
+  // デバッグ用：ユーザー情報をコンソールに出力
+  useEffect(() => {
+    if (user) {
+      console.log('Navigation - Current user:', user);
+    }
+  }, [user]);
 
   const handleSignOut = async () => {
     setIsSigningOut(true)
@@ -49,17 +55,19 @@ export default function Navigation() {
           </div>
           
           <div className="flex items-center space-x-4">
-            {session?.user ? (
+            {user ? (
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2">
                   <div className="h-8 w-8 bg-indigo-100 rounded-full flex items-center justify-center">
                     <span className="text-sm font-medium text-indigo-700">
-                      {session.user.name.charAt(0).toUpperCase()}
+                      {(user.user_metadata?.name || user.email || 'U').charAt(0).toUpperCase()}
                     </span>
                   </div>
                   <div className="hidden sm:block">
-                    <p className="text-sm font-medium text-gray-900">{session.user.name}</p>
-                    <p className="text-xs text-gray-500">{session.user.email}</p>
+                    <p className="text-sm font-medium text-gray-900">
+                      {user.user_metadata?.name || user.user_metadata?.full_name || 'ユーザー'}
+                    </p>
+                    <p className="text-xs text-gray-500">{user.email}</p>
                   </div>
                 </div>
                 

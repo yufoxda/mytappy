@@ -1,9 +1,10 @@
 -- 改良版: シンプルで効率的な日程調整システム（マテリアライズドビュー採用）
 
--- ユーザーアカウント
+-- ユーザーアカウント（Supabase認証と連携）
 CREATE TABLE users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name VARCHAR NOT NULL,
+  auth_user_id UUID UNIQUE REFERENCES auth.users(id), -- Supabase認証テーブルとの連携
+  name VARCHAR NOT NULL, -- 表示名（非認証：投票時入力、認証：変更可能）
   email VARCHAR UNIQUE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -76,6 +77,7 @@ CREATE TABLE user_availability_patterns (
 );
 
 -- パフォーマンス最適化インデックス
+CREATE INDEX idx_users_auth_user_id ON users(auth_user_id); -- 認証ユーザーID用インデックス
 CREATE INDEX idx_event_dates_event_id ON event_dates(event_id);
 CREATE INDEX idx_event_dates_order ON event_dates(event_id, column_order);
 CREATE INDEX idx_event_times_event_id ON event_times(event_id);
@@ -152,8 +154,79 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- 新規認証ユーザーの自動連携関数
+CREATE OR REPLACE FUNCTION handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.users (auth_user_id, email, name)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email, 'ユーザー')
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 認証ユーザー削除時の連携関数
+CREATE OR REPLACE FUNCTION handle_user_delete()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- 認証ユーザーが削除された場合、auth_user_idをNULLに設定（レコードは保持）
+  UPDATE public.users 
+  SET auth_user_id = NULL
+  WHERE auth_user_id = OLD.id;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- 投票データ変更時のトリガー
 CREATE TRIGGER trigger_refresh_vote_statistics
   AFTER INSERT OR UPDATE OR DELETE ON votes
   FOR EACH STATEMENT
   EXECUTE FUNCTION refresh_vote_statistics();
+
+-- 認証ユーザー作成時のトリガー（自動でusersテーブルにレコード作成）
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW
+  EXECUTE FUNCTION handle_new_user();
+
+-- 認証ユーザー削除時のトリガー
+CREATE TRIGGER on_auth_user_deleted
+  AFTER DELETE ON auth.users
+  FOR EACH ROW
+  EXECUTE FUNCTION handle_user_delete();
+
+-- コメント追加
+COMMENT ON COLUMN users.auth_user_id IS 'Supabase認証テーブル(auth.users)のIDとの紐付け（NULLの場合は非認証ユーザー）';
+COMMENT ON COLUMN users.name IS '表示名（非認証：投票時入力名、認証：変更可能な表示名）';
+
+/*
+== シンプルなユーザー管理設計 ==
+
+### データ構造の考え方：
+1. `name`: 唯一の表示名フィールド
+   - 非認証ユーザー：投票時に入力した名前
+   - 認証ユーザー：初回ログイン時に自動設定、その後変更可能
+   
+2. `auth_user_id`: 認証状態の判定
+   - NULL: 非認証ユーザー
+   - UUID: 認証済みユーザー
+
+### 利点：
+- シンプルで理解しやすい
+- フィールドが1つなので混乱がない  
+- 認証・非認証ユーザー共通の扱い
+
+### 使用例：
+-- 認証済みかどうかの判定
+SELECT *, (auth_user_id IS NOT NULL) as is_authenticated FROM users;
+
+-- 認証済みユーザーのみ取得
+SELECT * FROM users WHERE auth_user_id IS NOT NULL;
+
+-- 名前更新（認証ユーザーのみ）
+UPDATE users SET name = '新しい名前' WHERE auth_user_id = 'user-uuid';
+
+*/
